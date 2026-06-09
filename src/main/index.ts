@@ -113,6 +113,7 @@ import {
   Claw3dSetupProgress,
 } from "./claw3d";
 import { startOfficeStack } from "./office-start";
+import { getOfficeStatus } from "./office-status";
 import {
   readEnv,
   setEnvValue,
@@ -1248,6 +1249,9 @@ function setupIPC(): void {
     if (conn.mode === "ssh" && conn.ssh) return sshGatewayStatus(conn.ssh);
     return isGatewayRunning();
   });
+  ipcMain.handle("office-status", (_event, profile?: string) =>
+    getOfficeStatus(profile),
+  );
 
   // Platform toggles (config.yaml platforms section)
   ipcMain.handle("get-platform-enabled", (_event, profile?: string) => {

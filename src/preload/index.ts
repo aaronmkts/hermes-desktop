@@ -7,6 +7,7 @@ import type {
   MessagingPlatformUpdate,
 } from "../shared/messaging-platforms";
 import type { ChatToolEvent } from "../shared/chat-stream";
+import type { OfficeStatus } from "../main/office-status";
 
 /**
  * Mirror of the renderer-side `CredentialPoolEntry` ambient type
@@ -516,6 +517,8 @@ const hermesAPI = {
   restartGateway: (profile?: string): Promise<boolean> =>
     ipcRenderer.invoke("restart-gateway", profile),
   gatewayStatus: (): Promise<boolean> => ipcRenderer.invoke("gateway-status"),
+  getOfficeStatus: (profile?: string): Promise<OfficeStatus> =>
+    ipcRenderer.invoke("office-status", profile),
 
   // Platform toggles
   getPlatformEnabled: (profile?: string): Promise<Record<string, boolean>> =>
