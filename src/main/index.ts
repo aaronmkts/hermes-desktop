@@ -136,7 +136,7 @@ import {
   updateSessionTitle,
 } from "./session-cache";
 import { listModels, addModel, removeModel, updateModel } from "./models";
-import { validateChatReadiness } from "./validation";
+import { validateChatReadinessForConnection } from "./validation";
 import {
   runConfigHealthCheck,
   autoFixIssue,
@@ -584,7 +584,7 @@ function setupIPC(): void {
   // will it work?". Fail-open semantics: any uncertain state returns
   // `ok: true`, so the renderer never false-blocks a Send.
   ipcMain.handle("validate-chat-readiness", (_event, profile?: string) => {
-    return validateChatReadiness(profile);
+    return validateChatReadinessForConnection(profile);
   });
 
   // Config-health audit + per-issue auto-fix. The renderer renders a
