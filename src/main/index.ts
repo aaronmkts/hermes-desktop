@@ -58,6 +58,10 @@ import {
 } from "./mcp-servers";
 import { updaterLogger } from "./updater-log";
 import {
+  getOrionUpdaterBlockedMessage,
+  isOrionUpdaterGuardEnabled,
+} from "./updater-guard";
+import {
   runHermesAuthLogin,
   cancelHermesAuthLogin,
   detectDeviceCode,
@@ -2112,9 +2116,17 @@ function setupUpdater(): void {
 
   // Log the updater's own lifecycle to <userData>/logs/updater.log so a
   // failed update (e.g. issue #271) leaves something to diagnose.
+  const orionUpdaterGuardEnabled = isOrionUpdaterGuardEnabled();
+
   autoUpdater.logger = updaterLogger;
   autoUpdater.autoDownload = false;
-  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.autoInstallOnAppQuit = !orionUpdaterGuardEnabled;
+
+  if (orionUpdaterGuardEnabled) {
+    updaterLogger.info(
+      "ORION updater guard enabled — upstream updates are notification-only",
+    );
+  }
 
   autoUpdater.on("update-available", (info) => {
     mainWindow?.webContents.send("update-available", {
@@ -2147,6 +2159,13 @@ function setupUpdater(): void {
   });
 
   ipcMain.handle("download-update", async () => {
+    if (orionUpdaterGuardEnabled) {
+      const message = getOrionUpdaterBlockedMessage();
+      updaterLogger.warn(message);
+      mainWindow?.webContents.send("update-error", message);
+      return false;
+    }
+
     try {
       await autoUpdater.downloadUpdate();
       return true;
@@ -2158,12 +2177,20 @@ function setupUpdater(): void {
   });
 
   ipcMain.handle("install-update", () => {
+    if (orionUpdaterGuardEnabled) {
+      const message = getOrionUpdaterBlockedMessage();
+      updaterLogger.warn(message);
+      mainWindow?.webContents.send("update-error", message);
+      return false;
+    }
+
     // Bracket the suspect call: if the log shows this line but the app
     // never relaunches, the failure is in quitAndInstall / the installer.
     updaterLogger.info(
       "Restart requested by user — calling quitAndInstall(isSilent=false, isForceRunAfter=true)",
     );
     autoUpdater.quitAndInstall(false, true);
+    return true;
   });
 
   setTimeout(() => {
