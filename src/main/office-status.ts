@@ -237,12 +237,37 @@ async function callSafely<T>(fn: () => T | Promise<T>, fallback: T): Promise<T> 
   }
 }
 
+const REQUIRED_DEPENDENCY_KEYS: (keyof OfficeStatusDependencies)[] = [
+  "now",
+  "getConnectionConfig",
+  "getBuildStatus",
+  "listProfiles",
+  "gatewayStatus",
+  "readPlatformStates",
+  "getProviderCredentialStatus",
+  "listSessions",
+  "listKanbanTasks",
+];
+
+function hasCompleteOfficeStatusDependencies(
+  deps: OfficeStatusDependencies,
+): deps is Required<OfficeStatusDependencies> {
+  return REQUIRED_DEPENDENCY_KEYS.every((key) => typeof deps[key] === "function");
+}
+
+async function resolveOfficeStatusDependencies(
+  deps: OfficeStatusDependencies,
+): Promise<Required<OfficeStatusDependencies>> {
+  if (hasCompleteOfficeStatusDependencies(deps)) return deps;
+  const defaults = await getDefaultOfficeStatusDependencies();
+  return { ...defaults, ...deps } as Required<OfficeStatusDependencies>;
+}
+
 export async function getOfficeStatus(
   profile?: string,
   deps: OfficeStatusDependencies = {},
 ): Promise<OfficeStatus> {
-  const defaults = await getDefaultOfficeStatusDependencies();
-  const d = { ...defaults, ...deps } as Required<OfficeStatusDependencies>;
+  const d = await resolveOfficeStatusDependencies(deps);
   const now = d.now();
   const conn = d.getConnectionConfig();
   const source = conn.mode === "ssh" ? "ssh" : conn.mode === "remote" ? "remote" : "local";
