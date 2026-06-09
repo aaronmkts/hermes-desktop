@@ -101,13 +101,13 @@ export function buildOperatorCards(status: OfficeStatus | null | undefined): Ope
     {
       label: "Remote gateway",
       value: status.gateway.running
-        ? `Running · ${status.gateway.connectedPlatforms}/${status.gateway.configuredPlatforms} connected${status.gateway.errorPlatforms ? ` · ${status.gateway.errorPlatforms} errors` : ""}`
+        ? `Running · ${status.gateway.connectedPlatforms}/${status.gateway.configuredPlatforms} connected${status.gateway.errorPlatforms ? ` · ${status.gateway.errorPlatforms} needs attention` : ""}`
         : "Stopped or unknown",
     },
     { label: "Active work", value: `${counts.active} active · ${counts.waiting} waiting` },
     { label: "Provider auth", value: status.providers.codexConfigured ? `Codex signed in via ${formatConfigured(status.providers.codexSource)}` : "Codex not detected" },
     { label: "Honcho memory", value: status.providers.honchoConfigured ? `Configured via ${formatConfigured(status.providers.honchoSource)}` : "Not detected" },
-    { label: "Platform health", value: `${status.gateway.connectedPlatforms} connected · ${status.gateway.errorPlatforms} errors · ${status.gateway.configuredPlatforms} configured` },
+    { label: "Platform health", value: `${status.gateway.connectedPlatforms} connected · ${status.gateway.errorPlatforms} needs attention · ${status.gateway.configuredPlatforms} configured` },
     { label: "Kanban tasks", value: `${counts.running} running · ${counts.blocked} blocked · ${counts.doneRecent} done today` },
   ];
 }

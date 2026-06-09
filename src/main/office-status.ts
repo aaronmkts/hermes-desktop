@@ -125,13 +125,16 @@ export function reduceOfficeAgentState(input: {
   lastInteractionAt?: number | null;
   kanban?: Partial<OfficeKanbanCounts> | null;
   platformErrors?: number;
+  connectedPlatforms?: number;
   authError?: boolean;
   gatewayError?: boolean;
   offline?: boolean;
 }): { state: OfficeAgentState; stateReason: string } {
   const kanban = { ...EMPTY_KANBAN, ...(input.kanban ?? {}) };
   if (input.offline) return { state: "offline", stateReason: "Remote gateway is unreachable" };
-  if (input.authError || input.gatewayError || (input.platformErrors ?? 0) > 0) {
+  const platformErrors = input.platformErrors ?? 0;
+  const connectedPlatforms = input.connectedPlatforms ?? 0;
+  if (input.authError || input.gatewayError || (platformErrors > 0 && connectedPlatforms === 0)) {
     return { state: "error", stateReason: "Platform or authentication error" };
   }
   const recent =
@@ -141,7 +144,14 @@ export function reduceOfficeAgentState(input: {
     return { state: "active", stateReason: recent ? "Recent session activity" : "Running task" };
   }
   if (kanban.blocked > 0) return { state: "waiting", stateReason: "Blocked task needs attention" };
-  if (input.gatewayRunning) return { state: "available", stateReason: "Gateway online and ready" };
+  if (input.gatewayRunning) {
+    return {
+      state: "available",
+      stateReason: connectedPlatforms > 0
+        ? `Gateway online with ${connectedPlatforms} connected platform${connectedPlatforms === 1 ? "" : "s"}`
+        : "Gateway online and ready",
+    };
+  }
   return { state: "idle", stateReason: "Gateway is not running" };
 }
 
@@ -296,6 +306,7 @@ export async function getOfficeStatus(
       lastInteractionAt: sessionSummary.lastInteractionAt,
       kanban,
       platformErrors: profilePlatformCounts.error,
+      connectedPlatforms: profilePlatformCounts.connected,
     });
     outputProfiles.push({
       id,
