@@ -17,13 +17,22 @@
  */
 
 import {
+  getConnectionConfig,
   getModelConfig,
   hasOAuthCredentials,
   readEnv,
-  customEndpointKeyResolvable,
 } from "./config";
 import { expectedEnvKeyForModel } from "./installer";
-import { isLocalBaseUrl } from "../shared/url-key-map";
+import {
+  expectedEnvKeyForUrl,
+  isLocalBaseUrl,
+  OPENAI_COMPAT_PROVIDERS,
+} from "../shared/url-key-map";
+import {
+  sshGetModelConfig,
+  sshReadEnv,
+  sshHasOAuthCredentials,
+} from "./ssh-remote";
 
 export type ChatReadinessCode =
   | "NO_ACTIVE_MODEL"
@@ -75,6 +84,108 @@ const OAUTH_PROVIDERS = new Set([
 // from the dropdown but had nothing set up.
 const NO_KEY_PROVIDERS = new Set(["auto"]);
 
+function customEndpointKeyResolvableFromEnv(
+  provider: string,
+  baseUrl: string,
+  env: Record<string, string>,
+): boolean {
+  const p = (provider || "").trim().toLowerCase();
+  if (!baseUrl || !OPENAI_COMPAT_PROVIDERS.has(p)) return false;
+
+  const candidates = new Set<string>([
+    expectedEnvKeyForUrl(baseUrl),
+    "CUSTOM_API_KEY",
+    "OPENAI_API_KEY",
+  ]);
+  for (const k of candidates) {
+    if ((env[k] ?? "").trim()) return true;
+  }
+  return false;
+}
+
+/**
+ * Synchronous readiness check against the desktop's own config —
+ * no network calls. Fast (single readEnv + getModelConfig).
+ *
+ * `profile` defaults to the active profile.
+ */
+interface ModelConfigLike {
+  provider: string;
+  model: string;
+  baseUrl: string;
+}
+
+function validateChatReadinessFromValues(
+  mc: ModelConfigLike,
+  env: Record<string, string>,
+  oauthCredentialsPresent: (provider: string) => boolean,
+): ChatReadiness {
+  const provider = (mc.provider || "").trim().toLowerCase();
+  const model = (mc.model || "").trim();
+  const baseUrl = (mc.baseUrl || "").trim();
+
+  // Provider="auto" lets hermes-agent pick a model at runtime based
+  // on whatever keys are present in .env. No key-presence check
+  // makes sense for it — fail open.
+  if (!provider || provider === "auto") return OK;
+
+  if (!model && provider !== "auto") {
+    return {
+      ok: false,
+      code: "NO_ACTIVE_MODEL",
+      message: "No model selected. Pick one in Models or the Chat picker.",
+      fixLocation: "models",
+    };
+  }
+
+  if (OAUTH_PROVIDERS.has(provider) || NO_KEY_PROVIDERS.has(provider)) {
+    // OAuth/no-key providers — skip the env-var check; the gateway's
+    // own auth path surfaces "not signed in" at send time. Fail open.
+    return OK;
+  }
+
+  // Local/private URLs typically don't require a key; the user may
+  // intentionally hit an unauthenticated LM Studio / Ollama. Don't
+  // block on missing key in that case.
+  if (isLocalBaseUrl(baseUrl)) return OK;
+
+  const expectedKey = expectedEnvKeyForModel(provider, baseUrl);
+  if (!expectedKey) {
+    // Unknown provider+URL combination. We don't know which env var
+    // to check, so fail open rather than risk a false-positive block.
+    return OK;
+  }
+
+  const value = (env[expectedKey] ?? "").trim();
+  if (value) return OK;
+
+  // OpenAI-compatible / custom endpoints (e.g. provider "custom" pointed at
+  // Groq) authenticate via a fallback key chain at runtime — the URL key may
+  // be absent while OPENAI_API_KEY / CUSTOM_API_KEY carries the credential.
+  // Accept the same chain the gateway uses so we don't false-block a Send
+  // that will actually succeed.
+  if (customEndpointKeyResolvableFromEnv(provider, baseUrl, env)) {
+    return OK;
+  }
+
+  // Secondary positive signal: the engine also accepts credentials
+  // stored in auth.json (top-level `providers[<name>]` or any entry
+  // in `credential_pool[<name>]` with a non-empty access/refresh
+  // token or api_key). This is how Nous Portal (issue #367) works in
+  // OAuth mode — there's no NOUS_API_KEY in .env but the engine
+  // resolves the credential from a properly-shaped auth.json entry.
+  // If we have that evidence, allow Send.
+  if (oauthCredentialsPresent(provider)) return OK;
+
+  return {
+    ok: false,
+    code: "MISSING_API_KEY",
+    message: `Missing ${expectedKey} for ${provider}. Set it in Providers.`,
+    fixLocation: "providers",
+    expectedEnvKey: expectedKey,
+  };
+}
+
 /**
  * Synchronous readiness check against the desktop's own config —
  * no network calls. Fast (single readEnv + getModelConfig).
@@ -83,75 +194,46 @@ const NO_KEY_PROVIDERS = new Set(["auto"]);
  */
 export function validateChatReadiness(profile?: string): ChatReadiness {
   try {
-    const mc = getModelConfig(profile);
-    const provider = (mc.provider || "").trim().toLowerCase();
-    const model = (mc.model || "").trim();
-    const baseUrl = (mc.baseUrl || "").trim();
-
-    // Provider="auto" lets hermes-agent pick a model at runtime based
-    // on whatever keys are present in .env. No key-presence check
-    // makes sense for it — fail open.
-    if (!provider || provider === "auto") return OK;
-
-    if (!model && provider !== "auto") {
-      return {
-        ok: false,
-        code: "NO_ACTIVE_MODEL",
-        message: "No model selected. Pick one in Models or the Chat picker.",
-        fixLocation: "models",
-      };
-    }
-
-    if (OAUTH_PROVIDERS.has(provider) || NO_KEY_PROVIDERS.has(provider)) {
-      // OAuth/no-key providers — skip the env-var check; the gateway's
-      // own auth path surfaces "not signed in" at send time. Fail open.
-      return OK;
-    }
-
-    // Local/private URLs typically don't require a key; the user may
-    // intentionally hit an unauthenticated LM Studio / Ollama. Don't
-    // block on missing key in that case.
-    if (isLocalBaseUrl(baseUrl)) return OK;
-
-    const expectedKey = expectedEnvKeyForModel(provider, baseUrl);
-    if (!expectedKey) {
-      // Unknown provider+URL combination. We don't know which env var
-      // to check, so fail open rather than risk a false-positive
-      // block.
-      return OK;
-    }
-
-    const env = readEnv(profile);
-    const value = (env[expectedKey] ?? "").trim();
-    if (value) return OK;
-
-    // OpenAI-compatible / custom endpoints (e.g. provider "custom" pointed at
-    // Groq) authenticate via a fallback key chain at runtime — the URL key may
-    // be absent while OPENAI_API_KEY / CUSTOM_API_KEY carries the credential.
-    // Accept the same chain the gateway uses so we don't false-block a Send
-    // that will actually succeed.
-    if (customEndpointKeyResolvable(provider, baseUrl, profile)) {
-      return OK;
-    }
-
-    // Secondary positive signal: the engine also accepts credentials
-    // stored in auth.json (top-level `providers[<name>]` or any entry
-    // in `credential_pool[<name>]` with a non-empty access/refresh
-    // token or api_key). This is how Nous Portal (issue #367) works in
-    // OAuth mode — there's no NOUS_API_KEY in .env but the engine
-    // resolves the credential from a properly-shaped auth.json entry.
-    // If we have that evidence, allow Send.
-    if (hasOAuthCredentials(provider, profile)) return OK;
-
-    return {
-      ok: false,
-      code: "MISSING_API_KEY",
-      message: `Missing ${expectedKey} for ${provider}. Set it in Providers.`,
-      fixLocation: "providers",
-      expectedEnvKey: expectedKey,
-    };
+    return validateChatReadinessFromValues(
+      getModelConfig(profile),
+      readEnv(profile),
+      (provider) => hasOAuthCredentials(provider, profile),
+    );
   } catch {
     // Fail open on any unexpected error — never false-block a Send.
+    return OK;
+  }
+}
+
+/**
+ * Connection-aware readiness check used by the main process. In SSH Tunnel mode
+ * the authoritative model/env/auth files live on the remote Hermes home, so the
+ * validator must read them over SSH instead of consulting local app state.
+ */
+export async function validateChatReadinessForConnection(
+  profile?: string,
+): Promise<ChatReadiness> {
+  try {
+    const conn = getConnectionConfig();
+    if (conn.mode !== "ssh" || !conn.ssh) {
+      return validateChatReadiness(profile);
+    }
+
+    const [mc, env] = await Promise.all([
+      sshGetModelConfig(conn.ssh, profile),
+      sshReadEnv(conn.ssh, profile),
+    ]);
+    const hasRemoteOAuthCredentials = await sshHasOAuthCredentials(
+      conn.ssh,
+      mc.provider,
+      profile,
+    );
+    return validateChatReadinessFromValues(
+      mc,
+      env,
+      () => hasRemoteOAuthCredentials,
+    );
+  } catch {
     return OK;
   }
 }

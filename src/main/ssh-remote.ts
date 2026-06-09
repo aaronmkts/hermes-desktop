@@ -18,13 +18,21 @@ import {
 import type { MemoryInfo } from "./memory";
 import type { SessionSummary, SearchResult } from "./sessions";
 import type { CachedSession } from "./session-cache";
-import type { ToolsetInfo } from "./tools";
+import { TOOLSET_DEFS, type ToolsetInfo } from "./tools";
 import { DEFAULT_MESSAGING_PLATFORM_TOOLSETS } from "../shared/messaging-platforms";
 import type { SavedModel } from "./models";
-import type { MemoryProviderInfo } from "./installer";
+import { expectedEnvKeyForModel, type MemoryProviderInfo } from "./installer";
 import { t } from "../shared/i18n";
 import { getAppLocale } from "./locale";
 import { HIDDEN_SUBPROCESS_OPTIONS } from "./process-options";
+import { canonicalProviderBaseUrl } from "./provider-registry";
+import { upsertBlockChild } from "./config";
+import {
+  isValidNamedProfileName,
+  isValidProfileName,
+  normalizeProfileName,
+  PROFILE_NAME_ERROR,
+} from "./utils";
 
 // ── SSH exec core ────────────────────────────────────────────────────────────
 
@@ -130,7 +138,38 @@ function normalizeRemotePath(remotePath: string): string {
   return remotePath.replace(/^~\//, "$HOME/");
 }
 
+/**
+ * Normalize renderer-supplied SSH profile names before they are interpolated
+ * into remote filesystem paths or passed to remote Hermes CLI commands.
+ * undefined, empty string, and "default" all mean the default profile; named
+ * profiles must match the same safe rules as local profiles.
+ */
+export function normalizeSshProfileName(profile?: unknown): string | undefined {
+  return normalizeProfileName(profile);
+}
+
+function remoteHermesHome(profile?: unknown): string {
+  const normalized = normalizeSshProfileName(profile);
+  return normalized ? `$HOME/.hermes/profiles/${normalized}` : "$HOME/.hermes";
+}
+
+function remoteHermesHomeTilde(profile?: unknown): string {
+  const normalized = normalizeSshProfileName(profile);
+  return normalized ? `~/.hermes/profiles/${normalized}` : "~/.hermes";
+}
+
+function pushProfileArg(args: string[], profile?: unknown, flag = "-p"): void {
+  const normalized = normalizeSshProfileName(profile);
+  if (normalized) args.push(flag, normalized);
+}
+
 function pythonJsonInput(payload: unknown): string {
+  if (payload && typeof payload === "object" && "profile" in payload) {
+    return JSON.stringify({
+      ...(payload as Record<string, unknown>),
+      profile: normalizeSshProfileName((payload as Record<string, unknown>).profile),
+    });
+  }
   return JSON.stringify(payload);
 }
 
@@ -170,6 +209,7 @@ export async function sshListInstalledSkills(
   config: SshConfig,
   profile?: string,
 ): Promise<InstalledSkill[]> {
+  const normalizedProfile = normalizeSshProfileName(profile);
   const script = `
 import os, json, sys
 payload = json.load(sys.stdin)
@@ -214,7 +254,7 @@ if os.path.isdir(skills_dir):
 print(json.dumps(skills))
 `;
   try {
-    const out = await sshPython(config, script, pythonJsonInput({ profile }));
+    const out = await sshPython(config, script, pythonJsonInput({ profile: normalizedProfile }));
     const parsed = JSON.parse(out.trim() || "[]") as Array<{
       name: string;
       category: string;
@@ -240,11 +280,16 @@ export async function sshGetSkillContent(
 export async function sshInstallSkill(
   config: SshConfig,
   identifier: string,
+  profile?: string,
 ): Promise<{ success: boolean; error?: string }> {
+  const normalizedProfile = normalizeSshProfileName(profile);
   try {
+    const args: string[] = [];
+    pushProfileArg(args, normalizedProfile);
+    args.push("skills", "install", identifier, "--yes");
     const stdout = await sshExec(
       config,
-      `hermes skills install ${shellQuote(identifier)} --yes 2>&1`,
+      buildRemoteHermesCmd(args, " 2>&1"),
       undefined,
       120000,
     );
@@ -257,12 +302,14 @@ export async function sshInstallSkill(
 export async function sshUninstallSkill(
   config: SshConfig,
   name: string,
+  profile?: string,
 ): Promise<{ success: boolean; error?: string }> {
+  const normalizedProfile = normalizeSshProfileName(profile);
   try {
-    const stdout = await sshExec(
-      config,
-      `hermes skills uninstall ${shellQuote(name)} --yes 2>&1`,
-    );
+    const args: string[] = [];
+    pushProfileArg(args, normalizedProfile);
+    args.push("skills", "uninstall", name, "--yes");
+    const stdout = await sshExec(config, buildRemoteHermesCmd(args, " 2>&1"));
     const result = classifySkillCliOutput(stdout ?? "");
     if (result.success) return result;
 
@@ -274,8 +321,9 @@ export async function sshUninstallSkill(
       `python3 -c '
 import os, sys
 name = ${shellQuote(name)}
+profile = ${shellQuote(normalizedProfile || "")}
 home = os.path.expanduser("~")
-skills_dir = os.path.join(home, ".hermes", "skills")
+skills_dir = os.path.join(home, ".hermes", "profiles", profile, "skills") if profile and profile != "default" else os.path.join(home, ".hermes", "skills")
 if not os.path.isdir(skills_dir):
     sys.exit(0)
 for cat in os.listdir(skills_dir):
@@ -325,7 +373,7 @@ export async function sshSearchSkills(
   try {
     const out = await sshExec(
       config,
-      `hermes skills browse --query ${shellQuote(query)} --json 2>/dev/null || echo "[]"`,
+      `${buildRemoteHermesCmd(["skills", "browse", "--query", query, "--json"], " 2>/dev/null")} || echo "[]"`,
     );
     const parsed = JSON.parse(out.trim() || "[]");
     if (Array.isArray(parsed)) {
@@ -372,17 +420,11 @@ function serializeEntries(
 }
 
 function remoteMemoryPath(profile?: string): string {
-  if (profile && profile !== "default") {
-    return `~/.hermes/profiles/${profile}/memories/MEMORY.md`;
-  }
-  return "~/.hermes/memories/MEMORY.md";
+  return `${remoteHermesHomeTilde(profile)}/memories/MEMORY.md`;
 }
 
 function remoteUserPath(profile?: string): string {
-  if (profile && profile !== "default") {
-    return `~/.hermes/profiles/${profile}/memories/USER.md`;
-  }
-  return "~/.hermes/memories/USER.md";
+  return `${remoteHermesHomeTilde(profile)}/memories/USER.md`;
 }
 
 async function sshGetSessionStats(
@@ -528,9 +570,7 @@ You strive to be helpful while being safe and responsible. You respect the user'
 `;
 
 function remoteSoulPath(profile?: string): string {
-  if (profile && profile !== "default")
-    return `~/.hermes/profiles/${profile}/SOUL.md`;
-  return "~/.hermes/SOUL.md";
+  return `${remoteHermesHomeTilde(profile)}/SOUL.md`;
 }
 
 export async function sshReadSoul(
@@ -545,6 +585,7 @@ export async function sshWriteSoul(
   content: string,
   profile?: string,
 ): Promise<boolean> {
+  normalizeSshProfileName(profile);
   try {
     await sshWriteFile(config, remoteSoulPath(profile), content);
     return true;
@@ -562,74 +603,6 @@ export async function sshResetSoul(
 }
 
 // ── Tools ────────────────────────────────────────────────────────────────────
-
-const TOOLSET_DEFS = [
-  {
-    key: "web",
-    labelKey: "tools.web.label",
-    descriptionKey: "tools.web.description",
-  },
-  {
-    key: "browser",
-    labelKey: "tools.browser.label",
-    descriptionKey: "tools.browser.description",
-  },
-  {
-    key: "terminal",
-    labelKey: "tools.terminal.label",
-    descriptionKey: "tools.terminal.description",
-  },
-  {
-    key: "file",
-    labelKey: "tools.file.label",
-    descriptionKey: "tools.file.description",
-  },
-  {
-    key: "code_execution",
-    labelKey: "tools.code_execution.label",
-    descriptionKey: "tools.code_execution.description",
-  },
-  {
-    key: "vision",
-    labelKey: "tools.vision.label",
-    descriptionKey: "tools.vision.description",
-  },
-  {
-    key: "image_gen",
-    labelKey: "tools.image_gen.label",
-    descriptionKey: "tools.image_gen.description",
-  },
-  {
-    key: "tts",
-    labelKey: "tools.tts.label",
-    descriptionKey: "tools.tts.description",
-  },
-  {
-    key: "skills",
-    labelKey: "tools.skills.label",
-    descriptionKey: "tools.skills.description",
-  },
-  {
-    key: "memory",
-    labelKey: "tools.memory.label",
-    descriptionKey: "tools.memory.description",
-  },
-  {
-    key: "session_search",
-    labelKey: "tools.session_search.label",
-    descriptionKey: "tools.session_search.description",
-  },
-  {
-    key: "clarify",
-    labelKey: "tools.clarify.label",
-    descriptionKey: "tools.clarify.description",
-  },
-  {
-    key: "delegation",
-    labelKey: "tools.delegation.label",
-    descriptionKey: "tools.delegation.description",
-  },
-];
 
 function parsePlatformToolsets(content: string): Record<string, Set<string>> {
   const toolsets: Record<string, Set<string>> = {};
@@ -688,9 +661,7 @@ function localizeToolDefs(
 }
 
 function remoteConfigPath(profile?: string): string {
-  if (profile && profile !== "default")
-    return `$HOME/.hermes/profiles/${profile}/config.yaml`;
-  return `$HOME/.hermes/config.yaml`;
+  return `${remoteHermesHome(profile)}/config.yaml`;
 }
 
 export async function sshGetToolsets(
@@ -834,9 +805,39 @@ async function sshSetPlatformToolsetEnabled(
 // ── Env / Config (Providers) ─────────────────────────────────────────────────
 
 function remoteEnvPath(profile?: string): string {
-  if (profile && profile !== "default")
-    return `~/.hermes/profiles/${profile}/.env`;
-  return "~/.hermes/.env";
+  return `${remoteHermesHomeTilde(profile)}/.env`;
+}
+
+export const SSH_ENV_MASK = "••••••••";
+
+export function maskRemoteEnvForRenderer(
+  env: Record<string, string>,
+): Record<string, string> {
+  const masked: Record<string, string> = {};
+  for (const [key, value] of Object.entries(env)) {
+    masked[key] = value ? SSH_ENV_MASK : "";
+  }
+  return masked;
+}
+
+function validateRemoteEnvEntry(key: string, value: string): void {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+    throw new Error(
+      "Invalid environment variable name. Use letters, numbers, and underscores, and do not start with a number.",
+    );
+  }
+  if (/[\r\n\0]/.test(value)) {
+    throw new Error(
+      "Environment variable values must be single-line and cannot contain NUL characters.",
+    );
+  }
+}
+
+export async function sshReadEnvForRenderer(
+  config: SshConfig,
+  profile?: string,
+): Promise<Record<string, string>> {
+  return maskRemoteEnvForRenderer(await sshReadEnv(config, profile));
 }
 
 export async function sshReadEnv(
@@ -883,6 +884,14 @@ export async function sshSetEnvValue(
   value: string,
   profile?: string,
 ): Promise<void> {
+  validateRemoteEnvEntry(key, value);
+
+  // The SSH renderer API returns masked placeholders instead of raw secrets.
+  // If an unchanged masked field is blurred/saved, treat it as no-op so the
+  // placeholder never overwrites the remote secret. Actual writes still pass
+  // their payload via stdin in sshWriteFile, never on the ssh command line.
+  if (value === SSH_ENV_MASK) return;
+
   const envPath = remoteEnvPath(profile);
   const content = await sshReadFile(config, envPath);
 
@@ -1132,8 +1141,75 @@ export async function sshSetConfigValue(
 }
 
 export function sshGetHermesHome(_config: SshConfig, profile?: string): string {
-  if (profile && profile !== "default") return `~/.hermes/profiles/${profile}`;
-  return "~/.hermes";
+  return remoteHermesHomeTilde(profile);
+}
+
+type SshCredentialEntry = {
+  access_token?: string;
+  refresh_token?: string;
+  api_key?: string;
+};
+
+function sshAuthPath(profile?: string): string {
+  return `${remoteHermesHome(profile)}/auth.json`;
+}
+
+function authStoreHasProviderCredentials(
+  store: unknown,
+  provider: string,
+): boolean {
+  if (!store || typeof store !== "object") return false;
+  const cleanProvider = provider.trim();
+  if (!cleanProvider) return false;
+  const root = store as {
+    providers?: Record<string, SshCredentialEntry>;
+    credential_pool?: Record<string, SshCredentialEntry[]>;
+  };
+
+  const providerEntry = root.providers?.[cleanProvider];
+  if (
+    providerEntry &&
+    (String(providerEntry.access_token || "").trim() ||
+      String(providerEntry.refresh_token || "").trim() ||
+      String(providerEntry.api_key || "").trim())
+  ) {
+    return true;
+  }
+
+  const entries = root.credential_pool?.[cleanProvider];
+  return Array.isArray(entries)
+    ? entries.some(
+        (entry) =>
+          !!(
+            entry &&
+            (String(entry.api_key || "").trim() ||
+              String(entry.access_token || "").trim() ||
+              String(entry.refresh_token || "").trim())
+          ),
+      )
+    : false;
+}
+
+export async function sshHasOAuthCredentials(
+  config: SshConfig,
+  provider: string,
+  profile?: string,
+): Promise<boolean> {
+  const paths = [sshAuthPath(profile)];
+  if (profile && profile !== "default") paths.push(sshAuthPath());
+
+  for (const path of paths) {
+    const raw = await sshReadFile(config, path);
+    if (!raw.trim()) continue;
+    try {
+      if (authStoreHasProviderCredentials(JSON.parse(raw), provider))
+        return true;
+    } catch {
+      // Ignore malformed auth stores; readiness remains fail-open only if the
+      // caller catches a broader SSH/read failure.
+    }
+  }
+  return false;
 }
 
 export async function sshGetModelConfig(
@@ -1153,6 +1229,63 @@ export async function sshGetModelConfig(
   };
 }
 
+async function sshPickAutoApiKeyForCustomProvider(
+  config: SshConfig,
+  provider: string,
+  baseUrl: string,
+  profile?: string,
+): Promise<string | null> {
+  if (provider !== "custom" || !baseUrl) return null;
+  const envKey = expectedEnvKeyForModel(provider, baseUrl);
+  if (!envKey) return null;
+  const env = await sshReadEnv(config, profile);
+  const raw = env[envKey];
+  if (!raw) return null;
+  const trimmed = raw.trim().replace(/^["']|["']$/g, "");
+  return trimmed || null;
+}
+
+function rewriteModelApiKey(content: string, apiKey: string | null): string {
+  const headerMatch = content.match(/^model:[^\S\r\n]*\r?\n/m);
+  if (!headerMatch) return content;
+  const start = headerMatch.index! + headerMatch[0].length;
+  const after = content.slice(start);
+  const nextTopMatch = after.match(/^\S/m);
+  const end = nextTopMatch ? start + nextTopMatch.index! : content.length;
+  const block = content.slice(start, end);
+  const apiKeyInBlock = /^[ \t]+api_key:\s*.*\r?\n?/m;
+  let newBlock = block;
+
+  if (apiKey) {
+    if (apiKeyInBlock.test(block)) {
+      newBlock = block.replace(/^([ \t]+api_key:\s*).*$/m, `$1"${apiKey}"`);
+    } else {
+      const eolMatch = block.match(/\r?\n/);
+      const eol = eolMatch ? eolMatch[0] : "\n";
+      const indentMatch = block.match(/^([ \t]+)\S/m);
+      const indent = indentMatch ? indentMatch[1] : "  ";
+      const apiKeyLine = `${indent}api_key: "${apiKey}"${eol}`;
+      const afterBaseUrl = block.replace(
+        /^([ \t]+base_url:\s*"[^"]*"\s*\r?\n)/m,
+        `$1${apiKeyLine}`,
+      );
+      newBlock =
+        afterBaseUrl !== block
+          ? afterBaseUrl
+          : block.replace(
+              /^([ \t]+provider:\s*"[^"]*"\s*\r?\n)/m,
+              `$1${apiKeyLine}`,
+            );
+      if (newBlock === block) newBlock = `${apiKeyLine}${block}`;
+    }
+  } else if (apiKeyInBlock.test(block)) {
+    newBlock = block.replace(apiKeyInBlock, "");
+  }
+
+  if (newBlock === block) return content;
+  return content.slice(0, start) + newBlock + content.slice(end);
+}
+
 export async function sshSetModelConfig(
   config: SshConfig,
   provider: string,
@@ -1160,15 +1293,33 @@ export async function sshSetModelConfig(
   baseUrl: string,
   profile?: string,
 ): Promise<void> {
-  await sshSetConfigValue(config, "model.provider", provider, profile);
-  await sshSetConfigValue(config, "model.default", model, profile);
-  if (baseUrl) {
-    await sshSetConfigValue(config, "model.base_url", baseUrl, profile);
-  }
   const configPath = remoteConfigPath(profile);
-  const content = await sshReadFile(config, configPath);
-  if (!content) return;
-  let updated = content.replace(/^(\s*streaming:\s*)(\S+)/m, "$1true");
+  const original = await sshReadFile(config, configPath);
+
+  // Rewrite the remote config.yaml as a document, not as independent dotted
+  // set operations. `sshSetConfigValue("model.default")` intentionally does
+  // not materialize missing nested blocks, which meant SSH Tunnel mode could
+  // silently fail to save a model when the remote config was new or lacked a
+  // model: block. The local helper already knows how to scope updates to the
+  // top-level model block while preserving unrelated sections, so use it here
+  // against the remote payload and then write the whole file back over SSH.
+  let updated = upsertBlockChild(original, "model", "provider", provider);
+  updated = upsertBlockChild(updated, "model", "default", model);
+
+  const effectiveBaseUrl = baseUrl || canonicalProviderBaseUrl(provider) || "";
+  if (effectiveBaseUrl) {
+    updated = upsertBlockChild(updated, "model", "base_url", effectiveBaseUrl);
+  }
+
+  const autoApiKey = await sshPickAutoApiKeyForCustomProvider(
+    config,
+    provider,
+    baseUrl,
+    profile,
+  );
+  updated = rewriteModelApiKey(updated, autoApiKey);
+
+  updated = updated.replace(/^(\s*streaming:\s*)(\S+)/m, "$1true");
   const lines = updated.split("\n");
   for (let i = 0; i < lines.length; i++) {
     if (
@@ -1180,9 +1331,9 @@ export async function sshSetModelConfig(
     }
   }
   updated = lines.join("\n");
-  if (updated !== content) await sshWriteFile(config, configPath, updated);
-}
 
+  if (updated !== original) await sshWriteFile(config, configPath, updated);
+}
 // ── Sessions ─────────────────────────────────────────────────────────────────
 
 export async function sshListSessions(
@@ -1191,6 +1342,7 @@ export async function sshListSessions(
   offset = 0,
   profile?: string,
 ): Promise<SessionSummary[]> {
+  const normalizedProfile = normalizeSshProfileName(profile);
   const script = `
 import sqlite3, json, os, sys
 payload = json.load(sys.stdin)
@@ -1222,7 +1374,7 @@ conn.close()
     const out = await sshPython(
       config,
       script,
-      pythonJsonInput({ profile, limit, offset }),
+      pythonJsonInput({ profile: normalizedProfile, limit, offset }),
     );
     return JSON.parse(out.trim() || "[]");
   } catch {
@@ -1235,6 +1387,7 @@ export async function sshGetSessionMessages(
   sessionId: string,
   profile?: string,
 ): Promise<import("./sessions").HistoryItem[]> {
+  const normalizedProfile = normalizeSshProfileName(profile);
   // Mirror the local getSessionMessages logic over SSH: widen the SELECT to
   // include tool_calls / tool_name / tool_call_id / reasoning columns, then
   // expand each row into one or more HistoryItem entries. Kept inline in
@@ -1358,12 +1511,74 @@ conn.close()
     const out = await sshPython(
       config,
       script,
-      pythonJsonInput({ profile, sessionId }),
+      pythonJsonInput({ profile: normalizedProfile, sessionId }),
     );
     return JSON.parse(out.trim() || "[]");
   } catch {
     return [];
   }
+}
+
+
+export interface SshDeleteSessionsResult {
+  requested: number;
+  deleted: number;
+}
+
+export async function sshDeleteSessions(
+  config: SshConfig,
+  sessionIds: string[],
+  profile?: string,
+): Promise<SshDeleteSessionsResult> {
+  const normalizedProfile = normalizeSshProfileName(profile);
+  const ids = Array.from(
+    new Set(
+      (Array.isArray(sessionIds) ? sessionIds : [])
+        .filter((id): id is string => typeof id === "string")
+        .map((id) => id.trim())
+        .filter(Boolean),
+    ),
+  );
+  if (ids.length === 0) return { requested: 0, deleted: 0 };
+
+  const script = `
+import sqlite3, json, os, sys
+payload = json.load(sys.stdin)
+profile = payload.get("profile")
+ids = payload.get("sessionIds") or []
+db = os.path.expanduser(f"~/.hermes/profiles/{profile}/state.db" if profile and profile != "default" else "~/.hermes/state.db")
+if not os.path.exists(db):
+    print(json.dumps({"requested": len(ids), "deleted": 0}))
+    sys.exit(0)
+conn = sqlite3.connect(db)
+try:
+    deleted = 0
+    with conn:
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+        for session_id in ids:
+            if "prompt_image_attachments" in tables:
+                conn.execute("DELETE FROM prompt_image_attachments WHERE session_id = ?", (session_id,))
+            conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
+            cur = conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+            deleted += cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
+    print(json.dumps({"requested": len(ids), "deleted": deleted}))
+finally:
+    conn.close()
+`;
+  const out = await sshPython(
+    config,
+    script,
+    pythonJsonInput({ profile: normalizedProfile, sessionIds: ids }),
+  );
+  return JSON.parse(out.trim() || `{"requested":${ids.length},"deleted":0}`);
+}
+
+export async function sshDeleteSession(
+  config: SshConfig,
+  sessionId: string,
+  profile?: string,
+): Promise<void> {
+  await sshDeleteSessions(config, [sessionId], profile);
 }
 
 export async function sshSearchSessions(
@@ -1372,6 +1587,7 @@ export async function sshSearchSessions(
   limit = 20,
   profile?: string,
 ): Promise<SearchResult[]> {
+  const normalizedProfile = normalizeSshProfileName(profile);
   const script = `
 import sqlite3, json, os, sys
 payload = json.load(sys.stdin)
@@ -1399,7 +1615,7 @@ conn.close()
     const out = await sshPython(
       config,
       script,
-      pythonJsonInput({ profile, query, limit }),
+      pythonJsonInput({ profile: normalizedProfile, query, limit }),
     );
     return JSON.parse(out.trim() || "[]");
   } catch {
@@ -1426,22 +1642,34 @@ export async function sshListProfiles(
   config: SshConfig,
 ): Promise<SshProfileInfo[]> {
   const script = `
-import os, json
+import os, json, re
 hermes_home = os.path.expanduser("~/.hermes")
 profiles_dir = os.path.join(hermes_home, "profiles")
-profiles = []
+active_file = os.path.join(hermes_home, "active_profile")
+name_re = re.compile(r"^[a-z0-9_][a-z0-9_-]{0,63}$")
+
+try:
+    active = open(active_file, encoding="utf-8").read().strip() or "default"
+except Exception:
+    active = "default"
+if active != "default" and not name_re.match(active):
+    active = "default"
+
 
 def read_config(path):
     model, provider = "", "auto"
     config_file = os.path.join(path, "config.yaml")
     if os.path.exists(config_file):
-        content = open(config_file).read()
-        import re
-        m = re.search(r'^\\s*default:\\s*["\\'\\']?([^"\\'\\' \\n#]+)["\\'\\']?', content, re.M)
+        try:
+            content = open(config_file, encoding="utf-8").read()
+        except Exception:
+            content = ""
+        m = re.search(r'^\\s*default:\\s*["\\']?([^"\\'\\n#]+)["\\']?', content, re.M)
         if m: model = m.group(1).strip()
-        p = re.search(r'^\\s*provider:\\s*["\\'\\']?([^"\\'\\' \\n#]+)["\\'\\']?', content, re.M)
+        p = re.search(r'^\\s*provider:\\s*["\\']?([^"\\'\\n#]+)["\\']?', content, re.M)
         if p: provider = p.group(1).strip()
     return model, provider
+
 
 def count_skills(path):
     skills_dir = os.path.join(path, "skills")
@@ -1455,40 +1683,45 @@ def count_skills(path):
                         count += 1
     return count
 
+
 def gw_running(path):
     pid_file = os.path.join(path, "gateway.pid")
     if not os.path.exists(pid_file): return False
     try:
-        pid = int(open(pid_file).read().strip())
+        raw = open(pid_file, encoding="utf-8").read().strip()
+        if raw.startswith("{"):
+            pid = int(json.loads(raw).get("pid", 0))
+        else:
+            pid = int(raw)
         os.kill(pid, 0)
         return True
-    except:
+    except Exception:
         return False
 
-# Default profile
-model, provider = read_config(hermes_home)
-profiles.append({
-    "name": "default", "path": hermes_home, "isDefault": True, "isActive": True,
-    "model": model, "provider": provider,
-    "hasEnv": os.path.exists(os.path.join(hermes_home, ".env")),
-    "hasSoul": os.path.exists(os.path.join(hermes_home, "SOUL.md")),
-    "skillCount": count_skills(hermes_home),
-    "gatewayRunning": gw_running(hermes_home)
-})
 
+def profile_info(name, path, is_default):
+    model, provider = read_config(path)
+    return {
+        "name": name,
+        "path": path,
+        "isDefault": is_default,
+        "isActive": active == name,
+        "model": model,
+        "provider": provider,
+        "hasEnv": os.path.exists(os.path.join(path, ".env")),
+        "hasSoul": os.path.exists(os.path.join(path, "SOUL.md")),
+        "skillCount": count_skills(path),
+        "gatewayRunning": gw_running(path),
+    }
+
+profiles = [profile_info("default", hermes_home, True)]
 if os.path.isdir(profiles_dir):
     for name in sorted(os.listdir(profiles_dir)):
-        p = os.path.join(profiles_dir, name)
-        if not os.path.isdir(p): continue
-        model, provider = read_config(p)
-        profiles.append({
-            "name": name, "path": p, "isDefault": False, "isActive": False,
-            "model": model, "provider": provider,
-            "hasEnv": os.path.exists(os.path.join(p, ".env")),
-            "hasSoul": os.path.exists(os.path.join(p, "SOUL.md")),
-            "skillCount": count_skills(p),
-            "gatewayRunning": gw_running(p)
-        })
+        if name.startswith(".") or not name_re.match(name):
+            continue
+        path = os.path.join(profiles_dir, name)
+        if os.path.isdir(path):
+            profiles.append(profile_info(name, path, False))
 
 print(json.dumps(profiles))
 `;
@@ -1499,7 +1732,7 @@ print(json.dumps(profiles))
     return [
       {
         name: "default",
-        path: "~/.hermes",
+        path: "$HOME/.hermes",
         isDefault: true,
         isActive: true,
         model: "",
@@ -1517,43 +1750,102 @@ export async function sshCreateProfile(
   config: SshConfig,
   name: string,
   clone: boolean,
-): Promise<boolean> {
+): Promise<{ success: boolean; error?: string }> {
+  if (name === "default") {
+    return { success: false, error: "Cannot create the default profile" };
+  }
+  if (!isValidNamedProfileName(name)) {
+    return { success: false, error: PROFILE_NAME_ERROR };
+  }
+
+  const script = `
+import json, os, shutil, sys
+payload = json.loads(sys.stdin.read() or "{}")
+name = payload["name"]
+clone = bool(payload.get("clone"))
+hermes_home = os.path.expanduser("~/.hermes")
+profiles_dir = os.path.join(hermes_home, "profiles")
+target = os.path.join(profiles_dir, name)
+if os.path.exists(target):
+    raise SystemExit(f"Profile '{name}' already exists at {target}")
+os.makedirs(profiles_dir, exist_ok=True)
+if clone:
+    def ignore(src, names):
+        ignored = {"profiles", "active_profile", "gateway.pid", "gateway_state.json"}
+        if os.path.abspath(src) == os.path.abspath(hermes_home):
+            return ignored.intersection(names)
+        return set()
+    shutil.copytree(hermes_home, target, ignore=ignore)
+else:
+    os.makedirs(target, exist_ok=False)
+print(json.dumps({"success": True, "path": target}))
+`;
+
   try {
-    const safe = name.replace(/[^a-zA-Z0-9_-]/g, "");
-    if (!safe) return false;
-    const quoted = shellQuote(safe);
-    if (clone) {
-      await sshExec(
-        config,
-        `hermes profiles create ${quoted} --clone-from default 2>&1 || mkdir -p ~/.hermes/profiles/${quoted}`,
-      );
-    } else {
-      await sshExec(
-        config,
-        `hermes profiles create ${quoted} 2>&1 || mkdir -p ~/.hermes/profiles/${quoted}`,
-      );
-    }
-    return true;
-  } catch {
-    return false;
+    await sshPython(config, script, pythonJsonInput({ name, clone }));
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: (err as Error).message || "Command failed" };
   }
 }
 
 export async function sshDeleteProfile(
   config: SshConfig,
   name: string,
-): Promise<boolean> {
+): Promise<{ success: boolean; error?: string }> {
+  if (name === "default") {
+    return { success: false, error: "Cannot delete the default profile" };
+  }
+  if (!isValidNamedProfileName(name)) {
+    return { success: false, error: PROFILE_NAME_ERROR };
+  }
+
+  const script = `
+import json, os, shutil, sys
+payload = json.loads(sys.stdin.read() or "{}")
+name = payload["name"]
+target = os.path.join(os.path.expanduser("~/.hermes"), "profiles", name)
+if os.path.isdir(target):
+    shutil.rmtree(target)
+print(json.dumps({"success": True}))
+`;
+
   try {
-    const safe = name.replace(/[^a-zA-Z0-9_-]/g, "");
-    if (!safe || safe === "default") return false;
-    const quoted = shellQuote(safe);
-    await sshExec(
-      config,
-      `hermes profiles delete ${quoted} --yes 2>&1 || rm -rf ~/.hermes/profiles/${quoted}`,
-    );
-    return true;
-  } catch {
-    return false;
+    await sshPython(config, script, pythonJsonInput({ name }));
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: (err as Error).message || "Command failed" };
+  }
+}
+
+export async function sshSetActiveProfile(
+  config: SshConfig,
+  name: string,
+): Promise<{ success: boolean; error?: string }> {
+  if (!isValidProfileName(name)) {
+    return { success: false, error: PROFILE_NAME_ERROR };
+  }
+
+  const script = `
+import json, os, sys
+payload = json.loads(sys.stdin.read() or "{}")
+name = payload["name"]
+hermes_home = os.path.expanduser("~/.hermes")
+if name != "default":
+    target = os.path.join(hermes_home, "profiles", name)
+    if not os.path.isdir(target):
+        raise SystemExit(f"Profile '{name}' does not exist at {target}")
+os.makedirs(hermes_home, exist_ok=True)
+with open(os.path.join(hermes_home, "active_profile"), "w", encoding="utf-8") as fh:
+    fh.write(name + "\\n")
+print(json.dumps({"success": True}))
+`;
+
+  try {
+    await sshPython(config, script, pythonJsonInput({ name }));
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: (err as Error).message || "Command failed" };
   }
 }
 
@@ -1696,6 +1988,69 @@ export async function sshGetHermesVersion(
   }
 }
 
+// Run a Hermes Cron CLI subcommand over SSH and return a structured result.
+export interface SshCronResult<T = unknown> {
+  success: boolean;
+  data?: T;
+  error?: string;
+  stdout?: string;
+}
+
+export async function sshRunCron<T = unknown>(
+  config: SshConfig,
+  args: string[],
+  opts: { profile?: string; parseJson?: boolean; timeoutMs?: number } = {},
+): Promise<SshCronResult<T>> {
+  const cliArgs: string[] = [];
+  pushProfileArg(cliArgs, opts.profile);
+  cliArgs.push("cron", ...args);
+  const cmd = buildRemoteHermesCmd(cliArgs);
+  try {
+    const stdout = await sshExec(
+      config,
+      cmd,
+      undefined,
+      opts.timeoutMs ?? 20000,
+    );
+    if (opts.parseJson) {
+      try {
+        return { success: true, data: JSON.parse(stdout) as T, stdout };
+      } catch (err) {
+        return {
+          success: false,
+          error: `Failed to parse JSON from remote 'hermes cron': ${(err as Error).message}`,
+          stdout,
+        };
+      }
+    }
+    return { success: true, stdout };
+  } catch (err) {
+    return {
+      success: false,
+      error: (err as Error).message || "Remote cron command failed",
+    };
+  }
+}
+
+export async function sshReadCronJobsFile(
+  config: SshConfig,
+  profile?: string,
+): Promise<unknown> {
+  const script = `
+import json, os, sys
+payload = json.load(sys.stdin)
+profile = payload.get("profile")
+path = os.path.expanduser(f"~/.hermes/profiles/{profile}/cron/jobs.json" if profile and profile != "default" else "~/.hermes/cron/jobs.json")
+try:
+    with open(path, "r", encoding="utf-8") as f:
+        print(json.dumps(json.load(f)))
+except FileNotFoundError:
+    print(json.dumps({"jobs": []}))
+`;
+  const out = await sshPython(config, script, pythonJsonInput({ profile }));
+  return JSON.parse(out.trim() || '{"jobs": []}');
+}
+
 // Run a Hermes Kanban CLI subcommand over SSH and return a structured result.
 export interface SshKanbanResult<T = unknown> {
   success: boolean;
@@ -1710,9 +2065,7 @@ export async function sshRunKanban<T = unknown>(
   opts: { profile?: string; parseJson?: boolean; timeoutMs?: number } = {},
 ): Promise<SshKanbanResult<T>> {
   const cliArgs: string[] = [];
-  if (opts.profile && opts.profile !== "default") {
-    cliArgs.push("-p", opts.profile);
-  }
+  pushProfileArg(cliArgs, opts.profile);
   cliArgs.push("kanban", ...args);
   const cmd = buildRemoteHermesCmd(cliArgs);
   try {

@@ -58,6 +58,10 @@ import {
 } from "./mcp-servers";
 import { updaterLogger } from "./updater-log";
 import {
+  getOrionUpdaterBlockedMessage,
+  isOrionUpdaterGuardEnabled,
+} from "./updater-guard";
+import {
   runHermesAuthLogin,
   cancelHermesAuthLogin,
   detectDeviceCode,
@@ -136,13 +140,18 @@ import {
   updateSessionTitle,
 } from "./session-cache";
 import { listModels, addModel, removeModel, updateModel } from "./models";
-import { validateChatReadiness } from "./validation";
+import { validateChatReadinessForConnection } from "./validation";
 import {
   runConfigHealthCheck,
   autoFixIssue,
   readConfigFixLog,
   type IssueCode,
 } from "./config-health";
+import {
+  autofixConfigIssueForConnection,
+  getConfigFixLogForConnection,
+  getConfigHealthForConnection,
+} from "./config-health-ipc";
 import {
   listProfiles,
   createProfile,
@@ -244,6 +253,7 @@ import {
   sshSetToolsetEnabled,
   sshSetMessagingPlatformToolsetEnabled,
   sshReadEnv,
+  sshReadEnvForRenderer,
   sshSetEnvValue,
   sshGetConfigValue,
   sshSetConfigValue,
@@ -252,10 +262,13 @@ import {
   sshSetModelConfig,
   sshListSessions,
   sshGetSessionMessages,
+  sshDeleteSession,
+  sshDeleteSessions,
   sshSearchSessions,
   sshListProfiles,
   sshCreateProfile,
   sshDeleteProfile,
+  sshSetActiveProfile,
   sshGatewayStatus,
   sshStartGateway,
   sshStopGateway,
@@ -576,7 +589,7 @@ function setupIPC(): void {
 
   ipcMain.handle("get-env", (_event, profile?: string) => {
     const conn = getConnectionConfig();
-    if (conn.mode === "ssh" && conn.ssh) return sshReadEnv(conn.ssh, profile);
+    if (conn.mode === "ssh" && conn.ssh) return sshReadEnvForRenderer(conn.ssh, profile);
     return readEnv(profile);
   });
 
@@ -584,7 +597,7 @@ function setupIPC(): void {
   // will it work?". Fail-open semantics: any uncertain state returns
   // `ok: true`, so the renderer never false-blocks a Send.
   ipcMain.handle("validate-chat-readiness", (_event, profile?: string) => {
-    return validateChatReadiness(profile);
+    return validateChatReadinessForConnection(profile);
   });
 
   // Config-health audit + per-issue auto-fix. The renderer renders a
@@ -592,11 +605,19 @@ function setupIPC(): void {
   // Settings → Diagnose section. Auto-fixes are additive only — never
   // delete; always log to ~/.hermes/logs/config-fixes.log.
   ipcMain.handle("get-config-health", (_event, profile?: string) => {
-    return runConfigHealthCheck(profile);
+    return getConfigHealthForConnection(
+      getConnectionConfig(),
+      profile,
+      runConfigHealthCheck,
+    );
   });
 
   ipcMain.handle("rerun-config-health", (_event, profile?: string) => {
-    return runConfigHealthCheck(profile);
+    return getConfigHealthForConnection(
+      getConnectionConfig(),
+      profile,
+      runConfigHealthCheck,
+    );
   });
 
   ipcMain.handle(
@@ -607,12 +628,22 @@ function setupIPC(): void {
       profile?: string,
       context?: Record<string, string>,
     ) => {
-      return autoFixIssue(code, profile, context);
+      return autofixConfigIssueForConnection(
+        getConnectionConfig(),
+        code,
+        profile,
+        context,
+        autoFixIssue,
+      );
     },
   );
 
   ipcMain.handle("get-config-fix-log", (_event, maxEntries?: number) => {
-    return readConfigFixLog(maxEntries);
+    return getConfigFixLogForConnection(
+      getConnectionConfig(),
+      maxEntries,
+      readConfigFixLog,
+    );
   });
 
   ipcMain.handle(
@@ -720,7 +751,12 @@ function setupIPC(): void {
 
   // API_SERVER_KEY management — lets the renderer detect a missing key and
   // generate one with a button click (local mode) or show instructions (remote/SSH).
-  ipcMain.handle("get-api-server-key-status", (_event, profile?: string) => {
+  ipcMain.handle("get-api-server-key-status", async (_event, profile?: string) => {
+    const conn = getConnectionConfig();
+    if (conn.mode === "ssh" && conn.ssh) {
+      const env = await sshReadEnv(conn.ssh, profile);
+      return { hasKey: (env.API_SERVER_KEY || "").trim().length > 0 };
+    }
     const key = getApiServerKey(profile);
     return { hasKey: key.length > 0 };
   });
@@ -730,9 +766,18 @@ function setupIPC(): void {
     async (_event, profile?: string) => {
       const { randomUUID } = await import("crypto");
       const key = `desk-${randomUUID()}`;
+      const conn = getConnectionConfig();
       // Write to both the active profile .env and the default .env so the
       // gateway (which reads the profile .env) and the desktop (which reads
-      // the default .env as fallback) both see the same key.
+      // the default .env as fallback) both see the same key. In SSH tunnel
+      // mode those paths live on the remote host.
+      if (conn.mode === "ssh" && conn.ssh) {
+        await sshSetEnvValue(conn.ssh, "API_SERVER_KEY", key, profile);
+        if (profile && profile !== "default") {
+          await sshSetEnvValue(conn.ssh, "API_SERVER_KEY", key);
+        }
+        return true;
+      }
       setEnvValue("API_SERVER_KEY", key, profile);
       if (profile && profile !== "default") {
         setEnvValue("API_SERVER_KEY", key);
@@ -1292,10 +1337,15 @@ function setupIPC(): void {
   });
 
   ipcMain.handle("delete-session", (_event, sessionId: string) => {
+    const conn = getConnectionConfig();
+    if (conn.mode === "ssh" && conn.ssh) return sshDeleteSession(conn.ssh, sessionId);
     return deleteSession(sessionId);
   });
 
   ipcMain.handle("delete-sessions", (_event, sessionIds: string[]) => {
+    const conn = getConnectionConfig();
+    if (conn.mode === "ssh" && conn.ssh)
+      return sshDeleteSessions(conn.ssh, Array.isArray(sessionIds) ? sessionIds : []);
     return deleteSessions(Array.isArray(sessionIds) ? sessionIds : []);
   });
 
@@ -1317,18 +1367,23 @@ function setupIPC(): void {
       return sshDeleteProfile(conn.ssh, name);
     return deleteProfile(name);
   });
-  ipcMain.handle("set-active-profile", (_event, name: string) => {
-    if (getConnectionConfig().mode !== "ssh") {
-      setActiveProfile(name);
-      // The desktop now follows this profile: chat/health resolve their URL
-      // from the active profile's own port. Drop the cached health flag so the
-      // next check probes the new gateway rather than the previous profile's.
-      notifyProfileSwitched();
-      // Bring the activated profile's own gateway up if it isn't already —
-      // without stopping any other profile's gateway (their bots stay online).
-      if (!isRemoteMode() && !isGatewayRunning(name)) {
-        startGateway(name);
-      }
+  ipcMain.handle("set-active-profile", async (_event, name: string) => {
+    const conn = getConnectionConfig();
+    if (conn.mode === "ssh" && conn.ssh) {
+      const result = await sshSetActiveProfile(conn.ssh, name);
+      if (result.success) notifyProfileSwitched();
+      return result.success;
+    }
+
+    setActiveProfile(name);
+    // The desktop now follows this profile: chat/health resolve their URL
+    // from the active profile's own port. Drop the cached health flag so the
+    // next check probes the new gateway rather than the previous profile's.
+    notifyProfileSwitched();
+    // Bring the activated profile's own gateway up if it isn't already —
+    // without stopping any other profile's gateway (their bots stay online).
+    if (!isRemoteMode() && !isGatewayRunning(name)) {
+      startGateway(name);
     }
     return true;
   });
@@ -1435,7 +1490,7 @@ function setupIPC(): void {
     (_event, identifier: string, _profile?: string) => {
       const conn = getConnectionConfig();
       if (conn.mode === "ssh" && conn.ssh)
-        return sshInstallSkill(conn.ssh, identifier);
+        return sshInstallSkill(conn.ssh, identifier, _profile);
       return installSkill(identifier, _profile);
     },
   );
@@ -1444,7 +1499,7 @@ function setupIPC(): void {
     (_event, name: string, _profile?: string) => {
       const conn = getConnectionConfig();
       if (conn.mode === "ssh" && conn.ssh)
-        return sshUninstallSkill(conn.ssh, name);
+        return sshUninstallSkill(conn.ssh, name, _profile);
       return uninstallSkill(name, _profile);
     },
   );
@@ -2068,9 +2123,17 @@ function setupUpdater(): void {
 
   // Log the updater's own lifecycle to <userData>/logs/updater.log so a
   // failed update (e.g. issue #271) leaves something to diagnose.
+  const orionUpdaterGuardEnabled = isOrionUpdaterGuardEnabled();
+
   autoUpdater.logger = updaterLogger;
   autoUpdater.autoDownload = false;
-  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.autoInstallOnAppQuit = !orionUpdaterGuardEnabled;
+
+  if (orionUpdaterGuardEnabled) {
+    updaterLogger.info(
+      "ORION updater guard enabled — upstream updates are notification-only",
+    );
+  }
 
   autoUpdater.on("update-available", (info) => {
     mainWindow?.webContents.send("update-available", {
@@ -2103,6 +2166,13 @@ function setupUpdater(): void {
   });
 
   ipcMain.handle("download-update", async () => {
+    if (orionUpdaterGuardEnabled) {
+      const message = getOrionUpdaterBlockedMessage();
+      updaterLogger.warn(message);
+      mainWindow?.webContents.send("update-error", message);
+      return false;
+    }
+
     try {
       await autoUpdater.downloadUpdate();
       return true;
@@ -2114,12 +2184,20 @@ function setupUpdater(): void {
   });
 
   ipcMain.handle("install-update", () => {
+    if (orionUpdaterGuardEnabled) {
+      const message = getOrionUpdaterBlockedMessage();
+      updaterLogger.warn(message);
+      mainWindow?.webContents.send("update-error", message);
+      return false;
+    }
+
     // Bracket the suspect call: if the log shows this line but the app
     // never relaunches, the failure is in quitAndInstall / the installer.
     updaterLogger.info(
       "Restart requested by user — calling quitAndInstall(isSilent=false, isForceRunAfter=true)",
     );
     autoUpdater.quitAndInstall(false, true);
+    return true;
   });
 
   setTimeout(() => {
