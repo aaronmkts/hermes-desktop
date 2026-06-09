@@ -27,6 +27,7 @@ import {
   sshGetSkillContent,
   sshInstallSkill,
   sshGetPlatformEnabled,
+  sshReadGatewayPlatformStates,
   sshInstallRegistryItem,
   sshListInstalledRegistry,
 } from "../src/main/ssh-remote";
@@ -349,6 +350,47 @@ describe("ssh tools and skills visibility", () => {
 
       expect(enabled.telegram).toBe(true);
       expect(enabled.whatsapp).toBe(false);
+    }),
+  );
+
+  it(
+    "reads remote gateway platform runtime state and desktop aliases",
+    withFakeSshRemote(async (remoteHome) => {
+      mkdirSync(join(remoteHome, ".hermes"), { recursive: true });
+      writeFileSync(
+        join(remoteHome, ".hermes", "gateway_state.json"),
+        JSON.stringify({
+          gateway_state: "running",
+          platforms: {
+            telegram: { state: "connected", updated_at: "2026-06-09T10:00:00Z" },
+            homeassistant: { state: "error", error_message: "token rejected" },
+            webhook: { state: "connected" },
+          },
+        }),
+      );
+
+      const states = await sshReadGatewayPlatformStates(sshConfig);
+
+      expect(states.telegram?.state).toBe("connected");
+      expect(states.home_assistant?.state).toBe("error");
+      expect(states.home_assistant?.error_message).toBe("token rejected");
+      expect(states.webhooks?.state).toBe("connected");
+    }),
+  );
+
+  it(
+    "ignores remote gateway platform state when gateway_state is not running",
+    withFakeSshRemote(async (remoteHome) => {
+      mkdirSync(join(remoteHome, ".hermes"), { recursive: true });
+      writeFileSync(
+        join(remoteHome, ".hermes", "gateway_state.json"),
+        JSON.stringify({
+          gateway_state: "stopped",
+          platforms: { telegram: { state: "connected" } },
+        }),
+      );
+
+      await expect(sshReadGatewayPlatformStates(sshConfig)).resolves.toEqual({});
     }),
   );
 

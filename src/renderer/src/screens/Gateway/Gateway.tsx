@@ -342,6 +342,18 @@ function Gateway({ profile }: { profile?: string }): React.JSX.Element {
     }
   }
 
+  async function restartRemoteGateway(): Promise<void> {
+    setBusyPlatform("__gateway_restart__");
+    try {
+      await window.hermesAPI.restartGateway(profile);
+      await loadConfig();
+    } finally {
+      setBusyPlatform(null);
+    }
+  }
+
+  const isRemoteSshSource = catalog?.source === "desktop" && catalog.editable;
+
   return (
     <div className="settings-container gateway-management">
       <div className="gateway-page-header">
@@ -351,15 +363,32 @@ function Gateway({ profile }: { profile?: string }): React.JSX.Element {
             {t("gateway.subtitle")}
           </p>
         </div>
-        <button
-          className="btn btn-secondary btn-sm"
-          onClick={() => void loadConfig()}
-          title={t("gateway.refreshTooltip")}
-        >
-          <RefreshCw size={16} />
-          {t("gateway.refresh")}
-        </button>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          {isRemoteSshSource && (
+            <button
+              className="btn btn-secondary btn-sm"
+              onClick={() => void restartRemoteGateway()}
+              disabled={busyPlatform === "__gateway_restart__"}
+              title="Restart the Hermes gateway on the VPS so platform key changes take effect."
+            >
+              Restart remote gateway
+            </button>
+          )}
+          <button
+            className="btn btn-secondary btn-sm"
+            onClick={() => void loadConfig()}
+            title={t("gateway.refreshTooltip")}
+          >
+            <RefreshCw size={16} />
+            {t("gateway.refresh")}
+          </button>
+        </div>
       </div>
+      {isRemoteSshSource && (
+        <div className="settings-field-hint" style={{ marginBottom: 12 }}>
+          Gateway secrets are stored on the VPS and are masked in the desktop UI.
+        </div>
+      )}
 
       <div className="settings-section gateway-overview">
         <div className="settings-field">
