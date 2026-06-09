@@ -244,6 +244,7 @@ import {
   sshSetToolsetEnabled,
   sshSetMessagingPlatformToolsetEnabled,
   sshReadEnv,
+  sshReadEnvForRenderer,
   sshSetEnvValue,
   sshGetConfigValue,
   sshSetConfigValue,
@@ -576,7 +577,7 @@ function setupIPC(): void {
 
   ipcMain.handle("get-env", (_event, profile?: string) => {
     const conn = getConnectionConfig();
-    if (conn.mode === "ssh" && conn.ssh) return sshReadEnv(conn.ssh, profile);
+    if (conn.mode === "ssh" && conn.ssh) return sshReadEnvForRenderer(conn.ssh, profile);
     return readEnv(profile);
   });
 
@@ -720,7 +721,12 @@ function setupIPC(): void {
 
   // API_SERVER_KEY management — lets the renderer detect a missing key and
   // generate one with a button click (local mode) or show instructions (remote/SSH).
-  ipcMain.handle("get-api-server-key-status", (_event, profile?: string) => {
+  ipcMain.handle("get-api-server-key-status", async (_event, profile?: string) => {
+    const conn = getConnectionConfig();
+    if (conn.mode === "ssh" && conn.ssh) {
+      const env = await sshReadEnv(conn.ssh, profile);
+      return { hasKey: (env.API_SERVER_KEY || "").trim().length > 0 };
+    }
     const key = getApiServerKey(profile);
     return { hasKey: key.length > 0 };
   });
@@ -730,9 +736,18 @@ function setupIPC(): void {
     async (_event, profile?: string) => {
       const { randomUUID } = await import("crypto");
       const key = `desk-${randomUUID()}`;
+      const conn = getConnectionConfig();
       // Write to both the active profile .env and the default .env so the
       // gateway (which reads the profile .env) and the desktop (which reads
-      // the default .env as fallback) both see the same key.
+      // the default .env as fallback) both see the same key. In SSH tunnel
+      // mode those paths live on the remote host.
+      if (conn.mode === "ssh" && conn.ssh) {
+        await sshSetEnvValue(conn.ssh, "API_SERVER_KEY", key, profile);
+        if (profile && profile !== "default") {
+          await sshSetEnvValue(conn.ssh, "API_SERVER_KEY", key);
+        }
+        return true;
+      }
       setEnvValue("API_SERVER_KEY", key, profile);
       if (profile && profile !== "default") {
         setEnvValue("API_SERVER_KEY", key);
