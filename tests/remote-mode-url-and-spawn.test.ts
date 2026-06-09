@@ -12,24 +12,31 @@ import { describe, it, expect, vi, afterEach } from "vitest";
  *      on `isRemoteMode()`.
  */
 
-const { TEST_HOME, connModeRef, sshTunnelUrlRef, sshLocalPortRef, spawnSpy } =
-  vi.hoisted(() => {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const path = require("path");
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const os = require("os");
-    return {
-      TEST_HOME: path.join(os.tmpdir(), `hermes-remote-test-${Date.now()}`),
-      connModeRef: { mode: "local" as "local" | "remote" | "ssh" },
-      sshTunnelUrlRef: { value: "http://localhost:18642" as string | null },
-      sshLocalPortRef: { value: 18642 as number | undefined },
-      spawnSpy: vi.fn(() => ({
-        unref: () => {},
-        pid: 12345,
-        on: () => {},
-      })),
-    };
-  });
+const {
+  TEST_HOME,
+  connModeRef,
+  sshTunnelUrlRef,
+  sshLocalPortRef,
+  spawnSpy,
+  sshRunCronSpy,
+} = vi.hoisted(() => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const path = require("path");
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const os = require("os");
+  return {
+    TEST_HOME: path.join(os.tmpdir(), `hermes-remote-test-${Date.now()}`),
+    connModeRef: { mode: "local" as "local" | "remote" | "ssh" },
+    sshTunnelUrlRef: { value: "http://localhost:18642" as string | null },
+    sshLocalPortRef: { value: 18642 as number | undefined },
+    spawnSpy: vi.fn(() => ({
+      unref: () => {},
+      pid: 12345,
+      on: () => {},
+    })),
+    sshRunCronSpy: vi.fn(),
+  };
+});
 
 vi.mock("../src/main/installer", () => ({
   HERMES_HOME: TEST_HOME,
@@ -90,6 +97,11 @@ vi.mock("child_process", async () => {
   };
 });
 
+vi.mock("../src/main/ssh-remote", () => ({
+  sshRunCron: sshRunCronSpy,
+  sshReadCronJobsFile: vi.fn(async () => ({ jobs: [] })),
+}));
+
 import {
   normaliseRemoteUrl,
   getApiUrl,
@@ -104,6 +116,7 @@ import http from "http";
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  sshRunCronSpy.mockReset();
 });
 
 describe("normaliseRemoteUrl", () => {
@@ -193,24 +206,18 @@ describe("getApiUrl in SSH mode", () => {
   });
 });
 
-describe("Cron SSH fallback", () => {
-  it("scopes the configured/default port fallback to cron after a successful /health probe", async () => {
+describe("Cron SSH control plane", () => {
+  it("uses remote Hermes cron list in SSH mode instead of /api/jobs", async () => {
     connModeRef.mode = "ssh";
     sshTunnelUrlRef.value = null;
     sshLocalPortRef.value = 18642;
+    sshRunCronSpy.mockResolvedValueOnce({
+      success: true,
+      data: { jobs: [{ id: "job-1", name: "Daily", schedule: "0 9 * * *" }] },
+      stdout: "{}",
+    });
 
     const fetchSpy = vi.fn(async (target: string) => {
-      if (target === "http://127.0.0.1:18642/health") {
-        return { ok: true } as Response;
-      }
-      if (target === "http://127.0.0.1:18642/api/jobs?include_disabled=true") {
-        return {
-          ok: true,
-          json: async () => ({
-            jobs: [{ id: "job-1", name: "Daily", schedule: "0 9 * * *" }],
-          }),
-        } as Response;
-      }
       throw new Error(`unexpected fetch target: ${target}`);
     });
     vi.stubGlobal("fetch", fetchSpy);
@@ -220,27 +227,21 @@ describe("Cron SSH fallback", () => {
 
     expect(jobs).toHaveLength(1);
     expect(jobs[0].id).toBe("job-1");
-    expect(fetchSpy).toHaveBeenNthCalledWith(
-      1,
-      "http://127.0.0.1:18642/health",
-      expect.objectContaining({ method: "GET" }),
+    expect(sshRunCronSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ localPort: 18642 }),
+      ["list", "--json"],
+      expect.objectContaining({ parseJson: true }),
     );
-    expect(fetchSpy).toHaveBeenNthCalledWith(
-      2,
-      "http://127.0.0.1:18642/api/jobs?include_disabled=true",
-      expect.any(Object),
-    );
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it("does not send cron API requests to the configured/default port when /health fails", async () => {
+  it("does not probe the configured/default port for cron when SSH CLI list fails", async () => {
     connModeRef.mode = "ssh";
     sshTunnelUrlRef.value = null;
     sshLocalPortRef.value = 18642;
+    sshRunCronSpy.mockResolvedValueOnce({ success: false, error: "boom" });
 
     const fetchSpy = vi.fn(async (target: string) => {
-      if (target === "http://127.0.0.1:18642/health") {
-        return { ok: false } as Response;
-      }
       throw new Error(`unexpected fetch target: ${target}`);
     });
     vi.stubGlobal("fetch", fetchSpy);
@@ -253,15 +254,11 @@ describe("Cron SSH fallback", () => {
 
     expect(jobs).toEqual([]);
     expect(consoleErrorSpy).toHaveBeenCalledWith(
-      "[CRON] remote list error:",
-      expect.any(Error),
+      "[CRON] ssh list failed:",
+      "boom",
     );
+    expect(fetchSpy).not.toHaveBeenCalled();
     consoleErrorSpy.mockRestore();
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
-    expect(fetchSpy).toHaveBeenCalledWith(
-      "http://127.0.0.1:18642/health",
-      expect.objectContaining({ method: "GET" }),
-    );
   });
 });
 
