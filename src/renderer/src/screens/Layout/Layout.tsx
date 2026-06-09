@@ -447,7 +447,12 @@ function Layout({
 
         {visitedViews.has("office") && (
           <div style={paneStyle("office")}>
-            <Office profile={activeProfile} visible={view === "office"} />
+            <Office
+              profile={activeProfile}
+              visible={view === "office"}
+              onNavigate={goTo}
+              onSelectProfile={handleSelectProfile}
+            />
           </div>
         )}
 
