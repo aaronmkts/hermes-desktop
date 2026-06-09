@@ -9,6 +9,13 @@ import { KeyRound } from "../../assets/icons";
 // Local mirror of the ambient `CredentialPoolEntry` from
 // src/preload/index.d.ts — the renderer's tsconfig sometimes doesn't
 // pick up the d.ts depending on where the file lives.
+interface ProviderCredentialStatus {
+  provider: string;
+  configured: boolean;
+  source: "env" | "auth.json" | "honcho.json" | "missing";
+  locationLabel: string;
+}
+
 interface CredentialPoolEntry {
   id?: string;
   label?: string;
@@ -59,6 +66,9 @@ function Providers({
   const [oauthModal, setOauthModal] = useState<
     (typeof OAUTH_PROVIDERS)[number] | null
   >(null);
+  const [providerStatuses, setProviderStatuses] = useState<
+    Record<string, ProviderCredentialStatus>
+  >({});
 
   // Per-key debounce timers for env auto-save on change. Previously env
   // values were persisted only on input blur, so users who clicked the
@@ -79,13 +89,20 @@ function Providers({
     const [envData, mc, pool] = await Promise.all([
       window.hermesAPI.getEnv(profile),
       window.hermesAPI.getModelConfig(profile),
-      window.hermesAPI.getCredentialPool(),
+      window.hermesAPI.getCredentialPool(profile),
     ]);
     setEnv(envData);
     setModelProvider(mc.provider);
     setModelName(mc.model);
     setModelBaseUrl(mc.baseUrl);
     setCredPool(pool);
+    const statuses = await Promise.all([
+      ...OAUTH_PROVIDERS.map((p) =>
+        window.hermesAPI.getProviderCredentialStatus(p.id, profile),
+      ),
+      window.hermesAPI.getProviderCredentialStatus("honcho", profile),
+    ]);
+    setProviderStatuses(Object.fromEntries(statuses.map((s) => [s.provider, s])));
 
     requestAnimationFrame(() => {
       modelLoaded.current = true;
@@ -227,6 +244,7 @@ function Providers({
       poolProvider,
       poolNewKey.trim(),
       poolNewLabel.trim(),
+      profile,
     );
     setCredPool((prev) => ({ ...prev, [poolProvider]: updated }));
     setPoolNewKey("");
@@ -239,7 +257,7 @@ function Providers({
   ): Promise<void> {
     const entries = [...(credPool[provider] || [])];
     entries.splice(index, 1);
-    await window.hermesAPI.setCredentialPool(provider, entries);
+    await window.hermesAPI.setCredentialPool(provider, entries, profile);
     setCredPool((prev) => ({ ...prev, [provider]: entries }));
   }
 
@@ -557,7 +575,14 @@ function Providers({
                       </button>
                     )}
                   </div>
-                  <div className="settings-field-hint">{t(field.hint)}</div>
+                  <div className="settings-field-hint">
+                    {t(field.hint)}
+                    {field.key === "HONCHO_API_KEY" && providerStatuses.honcho?.configured && (
+                      <span className="settings-saved" style={{ marginLeft: 8 }}>
+                        Configured via {providerStatuses.honcho.locationLabel}
+                      </span>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
@@ -579,7 +604,14 @@ function Providers({
                 <BrandLogo provider={p.id} size={22} />
                 <span className="provider-key-card-title">{p.name}</span>
               </div>
-              <div className="settings-field-hint">{t(p.desc)}</div>
+              <div className="settings-field-hint">
+                {t(p.desc)}
+                {providerStatuses[p.id]?.configured && (
+                  <span className="settings-saved" style={{ marginLeft: 8 }}>
+                    Signed in via {providerStatuses[p.id].locationLabel}
+                  </span>
+                )}
+              </div>
               <button
                 className="btn btn-secondary btn-sm oauth-signin-btn"
                 aria-label={`${t("providers.oauth.signIn")} — ${p.name}`}
