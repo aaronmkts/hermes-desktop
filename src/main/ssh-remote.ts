@@ -784,6 +784,38 @@ function remoteEnvPath(profile?: string): string {
   return "~/.hermes/.env";
 }
 
+export const SSH_ENV_MASK = "••••••••";
+
+export function maskRemoteEnvForRenderer(
+  env: Record<string, string>,
+): Record<string, string> {
+  const masked: Record<string, string> = {};
+  for (const [key, value] of Object.entries(env)) {
+    masked[key] = value ? SSH_ENV_MASK : "";
+  }
+  return masked;
+}
+
+function validateRemoteEnvEntry(key: string, value: string): void {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+    throw new Error(
+      "Invalid environment variable name. Use letters, numbers, and underscores, and do not start with a number.",
+    );
+  }
+  if (/[\r\n\0]/.test(value)) {
+    throw new Error(
+      "Environment variable values must be single-line and cannot contain NUL characters.",
+    );
+  }
+}
+
+export async function sshReadEnvForRenderer(
+  config: SshConfig,
+  profile?: string,
+): Promise<Record<string, string>> {
+  return maskRemoteEnvForRenderer(await sshReadEnv(config, profile));
+}
+
 export async function sshReadEnv(
   config: SshConfig,
   profile?: string,
@@ -828,6 +860,14 @@ export async function sshSetEnvValue(
   value: string,
   profile?: string,
 ): Promise<void> {
+  validateRemoteEnvEntry(key, value);
+
+  // The SSH renderer API returns masked placeholders instead of raw secrets.
+  // If an unchanged masked field is blurred/saved, treat it as no-op so the
+  // placeholder never overwrites the remote secret. Actual writes still pass
+  // their payload via stdin in sshWriteFile, never on the ssh command line.
+  if (value === SSH_ENV_MASK) return;
+
   const envPath = remoteEnvPath(profile);
   const content = await sshReadFile(config, envPath);
 
