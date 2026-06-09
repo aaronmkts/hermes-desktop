@@ -12,6 +12,7 @@ import type {
   MessagingPlatformUpdate,
 } from "../shared/messaging-platforms";
 import type { ChatToolEvent } from "../shared/chat-stream";
+import type { OfficeStatus } from "../main/office-status";
 
 interface ElectronAPI {
   process: {
@@ -405,6 +406,7 @@ interface HermesAPI {
   stopGateway: () => Promise<boolean>;
   restartGateway: (profile?: string) => Promise<boolean>;
   gatewayStatus: () => Promise<boolean>;
+  getOfficeStatus: (profile?: string) => Promise<OfficeStatus>;
 
   // Platform toggles
   getPlatformEnabled: (profile?: string) => Promise<Record<string, boolean>>;
