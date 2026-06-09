@@ -21,6 +21,17 @@ describe("reduceOfficeAgentState", () => {
   it("maps platform errors to error", () => {
     expect(reduceOfficeAgentState({ gatewayRunning: true, now, lastInteractionAt: null, platformErrors: 1 }).state).toBe("error");
   });
+  it("keeps the agent available when connected platforms exist despite optional platform errors", () => {
+    expect(
+      reduceOfficeAgentState({
+        gatewayRunning: true,
+        now,
+        lastInteractionAt: null,
+        platformErrors: 2,
+        connectedPlatforms: 2,
+      }),
+    ).toEqual({ state: "available", stateReason: "Gateway online with 2 connected platforms" });
+  });
   it("maps blocked tasks to waiting", () => {
     expect(reduceOfficeAgentState({ gatewayRunning: true, now, lastInteractionAt: null, kanban: { todo: 0, ready: 0, running: 0, blocked: 2, doneRecent: 0 } }).state).toBe("waiting");
   });
