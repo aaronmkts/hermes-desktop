@@ -28,13 +28,21 @@ function readStoredCeo(): string | null {
  * The Office tab. Renders a native, in-renderer 3D office (no external dev
  * server / webview) where each Hermes profile appears as an interactive agent.
  */
-function Office({ visible }: OfficeProps): React.JSX.Element {
+function Office({ profile, visible }: OfficeProps): React.JSX.Element {
   const { t } = useI18n();
   const [agents, setAgents] = useState<OfficeAgent[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [ceoId, setCeoId] = useState<string | null>(readStoredCeo);
   const [chatOpen, setChatOpen] = useState(false);
+  const [operatorStatus, setOperatorStatus] = useState<{
+    build?: Awaited<ReturnType<typeof window.hermesAPI.getOrionBuildStatus>>;
+    gatewayRunning?: boolean;
+    connectedPlatforms?: number;
+    errorPlatforms?: number;
+    codex?: Awaited<ReturnType<typeof window.hermesAPI.getProviderCredentialStatus>>;
+    honcho?: Awaited<ReturnType<typeof window.hermesAPI.getProviderCredentialStatus>>;
+  }>({});
 
   const setCeo = useCallback((id: string | null) => {
     setCeoId(id);
@@ -48,6 +56,29 @@ function Office({ visible }: OfficeProps): React.JSX.Element {
   // Avoid refetching every time the tab regains visibility within a session;
   // only the first reveal and explicit refreshes hit IPC.
   const loadedOnce = useRef(false);
+
+
+  const loadOperatorStatus = useCallback(async () => {
+    try {
+      const [build, gatewayRunning, platforms, codex, honcho] = await Promise.all([
+        window.hermesAPI.getOrionBuildStatus(),
+        window.hermesAPI.gatewayStatus(),
+        window.hermesAPI.getMessagingPlatforms(profile),
+        window.hermesAPI.getProviderCredentialStatus("openai-codex", profile),
+        window.hermesAPI.getProviderCredentialStatus("honcho", profile),
+      ]);
+      setOperatorStatus({
+        build,
+        gatewayRunning,
+        connectedPlatforms: platforms.platforms.filter((p) => p.state === "connected").length,
+        errorPlatforms: platforms.platforms.filter((p) => p.state === "error" || p.error_message).length,
+        codex,
+        honcho,
+      });
+    } catch {
+      // Office is an overview; individual management screens remain source of truth.
+    }
+  }, [profile]);
 
   const loadAgents = useCallback(async () => {
     setLoading(true);
@@ -65,8 +96,9 @@ function Office({ visible }: OfficeProps): React.JSX.Element {
   useEffect(() => {
     if (visible && !loadedOnce.current) {
       void loadAgents();
+      void loadOperatorStatus();
     }
-  }, [visible, loadAgents]);
+  }, [visible, loadAgents, loadOperatorStatus]);
 
   // Background poll: re-read profiles while the tab is visible so a gateway
   // starting/stopping flips an agent's status (idle <-> working). The 3D
@@ -100,9 +132,10 @@ function Office({ visible }: OfficeProps): React.JSX.Element {
     if (!visible) return;
     const interval = window.setInterval(() => {
       void refreshAgentStatuses();
+      void loadOperatorStatus();
     }, 4000);
     return () => window.clearInterval(interval);
-  }, [visible, refreshAgentStatuses]);
+  }, [visible, refreshAgentStatuses, loadOperatorStatus]);
 
   // The initial fetch is driven solely by the visible-guard effect above
   // (gated on `!loadedOnce.current`). A second unconditional mount effect used
@@ -185,7 +218,7 @@ function Office({ visible }: OfficeProps): React.JSX.Element {
           </span>
           <button
             type="button"
-            onClick={() => void loadAgents()}
+            onClick={() => { void loadAgents(); void loadOperatorStatus(); }}
             disabled={loading}
             title={t("office.refresh")}
             style={{
@@ -215,6 +248,74 @@ function Office({ visible }: OfficeProps): React.JSX.Element {
           </button>
         </div>
       </header>
+
+      <section
+        aria-label="ORION operator status"
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+          gap: 8,
+          padding: "10px 16px",
+          borderBottom: "1px solid var(--border, rgba(0,0,0,0.08))",
+          background: "rgba(127,127,127,0.04)",
+        }}
+      >
+        {[
+          {
+            label: "ORION build",
+            value: operatorStatus.build?.manualUpdates
+              ? operatorStatus.build.upstreamVersion
+                ? `Manual update · upstream ${operatorStatus.build.upstreamVersion}`
+                : "Manual fork updates"
+              : "Upstream updater enabled",
+          },
+          {
+            label: "Remote gateway",
+            value: operatorStatus.gatewayRunning
+              ? `Running · ${operatorStatus.connectedPlatforms ?? 0} connected${operatorStatus.errorPlatforms ? ` · ${operatorStatus.errorPlatforms} errors` : ""}`
+              : "Stopped or unknown",
+          },
+          {
+            label: "Codex auth",
+            value: operatorStatus.codex?.configured
+              ? `Signed in via ${operatorStatus.codex.locationLabel}`
+              : "Not detected",
+          },
+          {
+            label: "Honcho memory",
+            value: operatorStatus.honcho?.configured
+              ? `Configured via ${operatorStatus.honcho.locationLabel}`
+              : "Not detected",
+          },
+        ].map((card) => (
+          <div
+            key={card.label}
+            style={{
+              border: "1px solid var(--border, rgba(0,0,0,0.08))",
+              borderRadius: 10,
+              padding: "8px 10px",
+              background: "var(--surface, rgba(255,255,255,0.04))",
+              minWidth: 0,
+            }}
+          >
+            <div style={{ fontSize: 11, opacity: 0.58, marginBottom: 3 }}>
+              {card.label}
+            </div>
+            <div
+              style={{
+                fontSize: 12,
+                fontWeight: 600,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+              title={card.value}
+            >
+              {card.value}
+            </div>
+          </div>
+        ))}
+      </section>
 
       <div style={{ position: "relative", flex: 1, minHeight: 0 }}>
         <Office3D

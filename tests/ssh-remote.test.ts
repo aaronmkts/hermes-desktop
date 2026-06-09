@@ -26,6 +26,14 @@ import {
   sshListInstalledSkills,
   sshGetSkillContent,
   sshInstallSkill,
+  sshGetPlatformEnabled,
+  sshReadGatewayPlatformStates,
+  sshGetCredentialPool,
+  sshSetCredentialPool,
+  sshAddCredentialPoolEntry,
+  sshGetProviderCredentialStatus,
+  sshInstallRegistryItem,
+  sshListInstalledRegistry,
 } from "../src/main/ssh-remote";
 import type { SshConfig } from "../src/main/ssh-tunnel";
 
@@ -317,6 +325,203 @@ describe("ssh tools and skills visibility", () => {
       await expect(
         sshGetSkillContent(sshConfig, skills[0].path),
       ).resolves.toContain("# Remote Skill");
+    }),
+  );
+
+  it(
+    "shows remote platform toggle intent from config even before gateway runtime state catches up",
+    withFakeSshRemote(async (remoteHome) => {
+      mkdirSync(join(remoteHome, ".hermes"), { recursive: true });
+      writeFileSync(
+        join(remoteHome, ".hermes", "config.yaml"),
+        [
+          "model:",
+          "  default: gpt-4o",
+          "platforms:",
+          "  telegram:",
+          "    enabled: true",
+          "  whatsapp:",
+          "    enabled: false",
+          "",
+        ].join("\n"),
+      );
+      writeFileSync(
+        join(remoteHome, ".hermes", "gateway_state.json"),
+        JSON.stringify({ platforms: { telegram: { state: "stopped" } } }),
+      );
+
+      const enabled = await sshGetPlatformEnabled(sshConfig);
+
+      expect(enabled.telegram).toBe(true);
+      expect(enabled.whatsapp).toBe(false);
+    }),
+  );
+
+  it(
+    "reads remote gateway platform runtime state and desktop aliases",
+    withFakeSshRemote(async (remoteHome) => {
+      mkdirSync(join(remoteHome, ".hermes"), { recursive: true });
+      writeFileSync(
+        join(remoteHome, ".hermes", "gateway_state.json"),
+        JSON.stringify({
+          gateway_state: "running",
+          platforms: {
+            telegram: { state: "connected", updated_at: "2026-06-09T10:00:00Z" },
+            homeassistant: { state: "error", error_message: "token rejected" },
+            webhook: { state: "connected" },
+          },
+        }),
+      );
+
+      const states = await sshReadGatewayPlatformStates(sshConfig);
+
+      expect(states.telegram?.state).toBe("connected");
+      expect(states.home_assistant?.state).toBe("error");
+      expect(states.home_assistant?.error_message).toBe("token rejected");
+      expect(states.webhooks?.state).toBe("connected");
+    }),
+  );
+
+  it(
+    "ignores remote gateway platform state when gateway_state is not running",
+    withFakeSshRemote(async (remoteHome) => {
+      mkdirSync(join(remoteHome, ".hermes"), { recursive: true });
+      writeFileSync(
+        join(remoteHome, ".hermes", "gateway_state.json"),
+        JSON.stringify({
+          gateway_state: "stopped",
+          platforms: { telegram: { state: "connected" } },
+        }),
+      );
+
+      await expect(sshReadGatewayPlatformStates(sshConfig)).resolves.toEqual({});
+    }),
+  );
+
+  it(
+    "reads and writes remote credential pool entries over SSH",
+    withFakeSshRemote(async (remoteHome) => {
+      mkdirSync(join(remoteHome, ".hermes"), { recursive: true });
+      writeFileSync(
+        join(remoteHome, ".hermes", "auth.json"),
+        JSON.stringify({ credential_pool: { "openai-codex": [{ access_token: "tok" }] } }),
+      );
+
+      const before = await sshGetCredentialPool(sshConfig);
+      expect(before["openai-codex"]).toHaveLength(1);
+
+      const updated = await sshAddCredentialPoolEntry(
+        sshConfig,
+        "openai-codex",
+        "new-secret",
+        "manual",
+      );
+      expect(updated).toHaveLength(2);
+      await sshSetCredentialPool(sshConfig, "openai-codex", updated.slice(1));
+      const after = await sshGetCredentialPool(sshConfig);
+      expect(after["openai-codex"]).toHaveLength(1);
+      expect(after["openai-codex"][0].access_token).toBe("new-secret");
+    }),
+  );
+
+  it(
+    "reports remote OAuth and Honcho credential sources without returning secrets",
+    withFakeSshRemote(async (remoteHome) => {
+      mkdirSync(join(remoteHome, ".hermes"), { recursive: true });
+      writeFileSync(
+        join(remoteHome, ".hermes", "auth.json"),
+        JSON.stringify({ credential_pool: { "openai-codex": [{ access_token: "tok" }] } }),
+      );
+      writeFileSync(
+        join(remoteHome, ".hermes", "honcho.json"),
+        JSON.stringify({ apiKey: "honcho-secret" }),
+      );
+
+      const codex = await sshGetProviderCredentialStatus(sshConfig, "openai-codex");
+      expect(codex).toMatchObject({ configured: true, source: "auth.json" });
+      expect(JSON.stringify(codex)).not.toContain("tok");
+
+      const honcho = await sshGetProviderCredentialStatus(sshConfig, "honcho");
+      expect(honcho).toMatchObject({ configured: true, source: "honcho.json" });
+      expect(JSON.stringify(honcho)).not.toContain("honcho-secret");
+    }),
+  );
+
+  it(
+    "installs Discover MCP registry entries into the remote Hermes config",
+    withFakeSshRemote(async (remoteHome) => {
+      mkdirSync(join(remoteHome, ".hermes"), { recursive: true });
+      writeFileSync(
+        join(remoteHome, ".hermes", "config.yaml"),
+        "model:\n  default: gpt-4o\n",
+      );
+      const oldFetch = globalThis.fetch;
+      globalThis.fetch = vi.fn(async (url: string | URL | Request) => {
+        const u = String(url);
+        if (u.includes("/manifest.json")) {
+          return new Response(
+            JSON.stringify({ url: "https://example.test/mcp" }),
+            { status: 200 },
+          );
+        }
+        throw new Error(`unexpected fetch ${u}`);
+      }) as typeof fetch;
+      try {
+        const result = await sshInstallRegistryItem(sshConfig, "mcps", {
+          id: "example-mcp",
+          name: "Example MCP",
+          path: "mcps/example-mcp",
+          description: "",
+        });
+        expect(result).toEqual({ success: true });
+        const config = readFileSync(
+          join(remoteHome, ".hermes", "config.yaml"),
+          "utf-8",
+        );
+        expect(config).toContain("mcp_servers:");
+        expect(config).toContain("  example-mcp:");
+        expect(config).toContain('    url: "https://example.test/mcp"');
+      } finally {
+        globalThis.fetch = oldFetch;
+      }
+    }),
+  );
+
+  it(
+    "lists Discover installed state from remote skills, MCPs, workflows, and profiles",
+    withFakeSshRemote(async (remoteHome) => {
+      mkdirSync(
+        join(remoteHome, ".hermes", "skills", "creative", "remote-skill"),
+        { recursive: true },
+      );
+      writeFileSync(
+        join(
+          remoteHome,
+          ".hermes",
+          "skills",
+          "creative",
+          "remote-skill",
+          "SKILL.md",
+        ),
+        "---\nname: remote-skill\ndescription: remote\n---\n# Remote\n",
+      );
+      mkdirSync(join(remoteHome, ".hermes", "workflows", "remote-flow"), {
+        recursive: true,
+      });
+      mkdirSync(join(remoteHome, ".hermes", "profiles", "remote-agent"), {
+        recursive: true,
+      });
+      writeFileSync(
+        join(remoteHome, ".hermes", "config.yaml"),
+        "mcp_servers:\n  remote-mcp:\n    url: https://example.test/mcp\n",
+      );
+
+      const installed = await sshListInstalledRegistry(sshConfig);
+
+      expect(installed.skills).toContain("remote-skill");
+      expect(installed.mcps).toContain("remote-mcp");
+      expect(installed.workflows).toContain("remote-flow");
+      expect(installed.agents).toContain("remote-agent");
     }),
   );
 

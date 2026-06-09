@@ -13,6 +13,21 @@ import type { ChatToolEvent } from "../shared/chat-stream";
  * (src/preload/index.d.ts) — preload is type-checked under
  * tsconfig.node.json which doesn't include the .d.ts. See #367.
  */
+interface ProviderCredentialStatus {
+  provider: string;
+  configured: boolean;
+  source: "env" | "auth.json" | "honcho.json" | "missing";
+  locationLabel: string;
+}
+
+interface OrionBuildStatus {
+  isOrionPatchedBuild: boolean;
+  manualUpdates: boolean;
+  label: string;
+  detail: string;
+  upstreamVersion?: string | null;
+}
+
 interface CredentialPoolEntry {
   id?: string;
   label?: string;
@@ -745,6 +760,11 @@ const hermesAPI = {
       label,
       profile,
     ),
+  getProviderCredentialStatus: (
+    provider: string,
+    profile?: string,
+  ): Promise<ProviderCredentialStatus> =>
+    ipcRenderer.invoke("get-provider-credential-status", provider, profile),
 
   // Models
   listModels: (): Promise<
@@ -851,6 +871,8 @@ const hermesAPI = {
   downloadUpdate: (): Promise<boolean> => ipcRenderer.invoke("download-update"),
   installUpdate: (): Promise<void> => ipcRenderer.invoke("install-update"),
   getAppVersion: (): Promise<string> => ipcRenderer.invoke("get-app-version"),
+  getOrionBuildStatus: (): Promise<OrionBuildStatus> =>
+    ipcRenderer.invoke("get-orion-build-status"),
 
   onUpdateAvailable: (
     callback: (info: { version: string; releaseNotes: string }) => void,

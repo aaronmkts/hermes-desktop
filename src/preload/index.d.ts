@@ -84,6 +84,21 @@ interface GatewayStartResult {
  * `{key, label}` are still readable via the optional `key` field.
  * New entries written from the UI use the canonical shape.
  */
+interface ProviderCredentialStatus {
+  provider: string;
+  configured: boolean;
+  source: "env" | "auth.json" | "honcho.json" | "missing";
+  locationLabel: string;
+}
+
+interface OrionBuildStatus {
+  isOrionPatchedBuild: boolean;
+  manualUpdates: boolean;
+  label: string;
+  detail: string;
+  upstreamVersion?: string | null;
+}
+
 interface CredentialPoolEntry {
   id?: string;
   label?: string;
@@ -621,6 +636,10 @@ interface HermesAPI {
     label: string,
     profile?: string,
   ) => Promise<Array<CredentialPoolEntry>>;
+  getProviderCredentialStatus: (
+    provider: string,
+    profile?: string,
+  ) => Promise<ProviderCredentialStatus>;
 
   // Models
   listModels: () => Promise<
@@ -692,6 +711,7 @@ interface HermesAPI {
   downloadUpdate: () => Promise<boolean>;
   installUpdate: () => Promise<void>;
   getAppVersion: () => Promise<string>;
+  getOrionBuildStatus: () => Promise<OrionBuildStatus>;
   onUpdateAvailable: (
     callback: (info: { version: string; releaseNotes: string }) => void,
   ) => () => void;

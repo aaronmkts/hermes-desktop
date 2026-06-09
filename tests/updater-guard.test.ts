@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  getOrionBuildStatus,
   getOrionUpdaterBlockedMessage,
   isOrionUpdaterGuardEnabled,
   ORION_PATCHED_BUILD,
@@ -15,6 +16,15 @@ describe("ORION updater guard", () => {
     expect(
       isOrionUpdaterGuardEnabled({ HERMES_ORION_UPDATER_GUARD: "0" }),
     ).toBe(false);
+  });
+
+  it("returns ORION build status for renderer UI", () => {
+    const status = getOrionBuildStatus("0.5.9");
+
+    expect(status.isOrionPatchedBuild).toBe(true);
+    expect(status.manualUpdates).toBe(true);
+    expect(status.label).toBe("ORION build");
+    expect(status.upstreamVersion).toBe("0.5.9");
   });
 
   it("returns clear rebuild instructions for blocked downloads", () => {

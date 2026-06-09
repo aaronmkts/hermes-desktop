@@ -20,13 +20,19 @@ import type { SessionSummary, SearchResult } from "./sessions";
 import type { CachedSession } from "./session-cache";
 import { TOOLSET_DEFS, type ToolsetInfo } from "./tools";
 import { DEFAULT_MESSAGING_PLATFORM_TOOLSETS } from "../shared/messaging-platforms";
+import type { MessagingPlatformRuntimeState } from "../shared/messaging-platforms";
 import type { SavedModel } from "./models";
+import type {
+  RegistryKind,
+  RegistryItem,
+  InstalledRegistry,
+} from "../shared/registry";
 import { expectedEnvKeyForModel, type MemoryProviderInfo } from "./installer";
 import { t } from "../shared/i18n";
 import { getAppLocale } from "./locale";
 import { HIDDEN_SUBPROCESS_OPTIONS } from "./process-options";
 import { canonicalProviderBaseUrl } from "./provider-registry";
-import { upsertBlockChild } from "./config";
+import { buildCredentialPoolEntry, upsertBlockChild, type CredentialEntry, type ProviderCredentialStatus } from "./config";
 import {
   isValidNamedProfileName,
   isValidProfileName,
@@ -148,12 +154,12 @@ export function normalizeSshProfileName(profile?: unknown): string | undefined {
   return normalizeProfileName(profile);
 }
 
-function remoteHermesHome(profile?: unknown): string {
+export function remoteHermesHome(profile?: unknown): string {
   const normalized = normalizeSshProfileName(profile);
   return normalized ? `$HOME/.hermes/profiles/${normalized}` : "$HOME/.hermes";
 }
 
-function remoteHermesHomeTilde(profile?: unknown): string {
+export function remoteHermesHomeTilde(profile?: unknown): string {
   const normalized = normalizeSshProfileName(profile);
   return normalized ? `~/.hermes/profiles/${normalized}` : "~/.hermes";
 }
@@ -167,13 +173,15 @@ function pythonJsonInput(payload: unknown): string {
   if (payload && typeof payload === "object" && "profile" in payload) {
     return JSON.stringify({
       ...(payload as Record<string, unknown>),
-      profile: normalizeSshProfileName((payload as Record<string, unknown>).profile),
+      profile: normalizeSshProfileName(
+        (payload as Record<string, unknown>).profile,
+      ),
     });
   }
   return JSON.stringify(payload);
 }
 
-async function sshReadFile(
+export async function sshReadFile(
   config: SshConfig,
   remotePath: string,
 ): Promise<string> {
@@ -187,7 +195,7 @@ async function sshReadFile(
   }
 }
 
-async function sshWriteFile(
+export async function sshWriteFile(
   config: SshConfig,
   remotePath: string,
   content: string,
@@ -254,7 +262,11 @@ if os.path.isdir(skills_dir):
 print(json.dumps(skills))
 `;
   try {
-    const out = await sshPython(config, script, pythonJsonInput({ profile: normalizedProfile }));
+    const out = await sshPython(
+      config,
+      script,
+      pythonJsonInput({ profile: normalizedProfile }),
+    );
     const parsed = JSON.parse(out.trim() || "[]") as Array<{
       name: string;
       category: string;
@@ -802,6 +814,47 @@ async function sshSetPlatformToolsetEnabled(
   }
 }
 
+
+function remoteGatewayStatePath(profile?: string): string {
+  return `${remoteHermesHomeTilde(profile)}/gateway_state.json`;
+}
+
+const REMOTE_PLATFORM_STATE_KEY: Record<string, string> = {
+  home_assistant: "homeassistant",
+  webhooks: "webhook",
+};
+
+interface RemoteGatewayStateFile {
+  gateway_state?: string | null;
+  pid?: number | null;
+  platforms?: Record<string, MessagingPlatformRuntimeState>;
+}
+
+export async function sshReadGatewayPlatformStates(
+  config: SshConfig,
+  profile?: string,
+): Promise<Record<string, MessagingPlatformRuntimeState>> {
+  const raw = await sshReadFile(config, remoteGatewayStatePath(profile));
+  if (!raw.trim()) return {};
+  try {
+    const parsed = JSON.parse(raw) as RemoteGatewayStateFile;
+    if (parsed.gateway_state && parsed.gateway_state !== "running") return {};
+    const platforms = parsed.platforms ?? {};
+    const result: Record<string, MessagingPlatformRuntimeState> = {};
+    for (const [platform, state] of Object.entries(platforms)) {
+      result[platform] = state;
+    }
+    for (const [desktopKey, stateKey] of Object.entries(REMOTE_PLATFORM_STATE_KEY)) {
+      if (platforms[stateKey] && !result[desktopKey]) {
+        result[desktopKey] = platforms[stateKey];
+      }
+    }
+    return result;
+  } catch {
+    return {};
+  }
+}
+
 // ── Env / Config (Providers) ─────────────────────────────────────────────────
 
 function remoteEnvPath(profile?: string): string {
@@ -1144,11 +1197,7 @@ export function sshGetHermesHome(_config: SshConfig, profile?: string): string {
   return remoteHermesHomeTilde(profile);
 }
 
-type SshCredentialEntry = {
-  access_token?: string;
-  refresh_token?: string;
-  api_key?: string;
-};
+type SshCredentialEntry = CredentialEntry;
 
 function sshAuthPath(profile?: string): string {
   return `${remoteHermesHome(profile)}/auth.json`;
@@ -1188,6 +1237,107 @@ function authStoreHasProviderCredentials(
           ),
       )
     : false;
+}
+
+
+function remoteHonchoPath(profile?: string): string {
+  return `${remoteHermesHome(profile)}/honcho.json`;
+}
+
+async function sshReadAuthStore(config: SshConfig, profile?: string): Promise<Record<string, unknown>> {
+  const raw = await sshReadFile(config, sshAuthPath(profile));
+  if (!raw.trim()) return {};
+  try {
+    return JSON.parse(raw) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+}
+
+async function sshWriteAuthStore(
+  config: SshConfig,
+  store: Record<string, unknown>,
+  profile?: string,
+): Promise<void> {
+  await sshWriteFile(config, sshAuthPath(profile), JSON.stringify(store, null, 2));
+}
+
+export async function sshGetCredentialPool(
+  config: SshConfig,
+  profile?: string,
+): Promise<Record<string, CredentialEntry[]>> {
+  const store = await sshReadAuthStore(config, profile);
+  const pool = store.credential_pool;
+  return pool && typeof pool === "object"
+    ? (pool as Record<string, CredentialEntry[]>)
+    : {};
+}
+
+export async function sshSetCredentialPool(
+  config: SshConfig,
+  provider: string,
+  entries: CredentialEntry[],
+  profile?: string,
+): Promise<void> {
+  const store = await sshReadAuthStore(config, profile);
+  if (!store.credential_pool || typeof store.credential_pool !== "object") {
+    store.credential_pool = {};
+  }
+  (store.credential_pool as Record<string, CredentialEntry[]>)[provider] = entries;
+  await sshWriteAuthStore(config, store, profile);
+}
+
+export async function sshAddCredentialPoolEntry(
+  config: SshConfig,
+  provider: string,
+  apiKey: string,
+  label: string,
+  profile?: string,
+): Promise<CredentialEntry[]> {
+  const existing = (await sshGetCredentialPool(config, profile))[provider] || [];
+  const entry = buildCredentialPoolEntry(provider, apiKey, label, existing);
+  const next = [...existing, entry];
+  await sshSetCredentialPool(config, provider, next, profile);
+  return next;
+}
+
+async function sshHasHonchoJsonCredential(
+  config: SshConfig,
+  profile?: string,
+): Promise<boolean> {
+  const raw = await sshReadFile(config, remoteHonchoPath(profile));
+  if (!raw.trim()) return false;
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    return !!(
+      String(parsed.apiKey || "").trim() ||
+      String(parsed.api_key || "").trim() ||
+      String(parsed.key || "").trim()
+    );
+  } catch {
+    return false;
+  }
+}
+
+export async function sshGetProviderCredentialStatus(
+  config: SshConfig,
+  provider: string,
+  profile?: string,
+): Promise<ProviderCredentialStatus> {
+  const cleanProvider = provider.trim();
+  if (cleanProvider === "honcho") {
+    const env = await sshReadEnv(config, profile);
+    if (String(env.HONCHO_API_KEY || "").trim()) {
+      return { provider, configured: true, source: "env", locationLabel: ".env on VPS" };
+    }
+    if (await sshHasHonchoJsonCredential(config, profile)) {
+      return { provider, configured: true, source: "honcho.json", locationLabel: "honcho.json on VPS" };
+    }
+    return { provider, configured: false, source: "missing", locationLabel: "Missing on VPS" };
+  }
+  return (await sshHasOAuthCredentials(config, cleanProvider, profile))
+    ? { provider, configured: true, source: "auth.json", locationLabel: "auth.json on VPS" }
+    : { provider, configured: false, source: "missing", locationLabel: "Missing on VPS" };
 }
 
 export async function sshHasOAuthCredentials(
@@ -1519,7 +1669,6 @@ conn.close()
   }
 }
 
-
 export interface SshDeleteSessionsResult {
   requested: number;
   deleted: number;
@@ -1785,7 +1934,10 @@ print(json.dumps({"success": True, "path": target}))
     await sshPython(config, script, pythonJsonInput({ name, clone }));
     return { success: true };
   } catch (err) {
-    return { success: false, error: (err as Error).message || "Command failed" };
+    return {
+      success: false,
+      error: (err as Error).message || "Command failed",
+    };
   }
 }
 
@@ -1814,7 +1966,10 @@ print(json.dumps({"success": True}))
     await sshPython(config, script, pythonJsonInput({ name }));
     return { success: true };
   } catch (err) {
-    return { success: false, error: (err as Error).message || "Command failed" };
+    return {
+      success: false,
+      error: (err as Error).message || "Command failed",
+    };
   }
 }
 
@@ -1845,7 +2000,10 @@ print(json.dumps({"success": True}))
     await sshPython(config, script, pythonJsonInput({ name }));
     return { success: true };
   } catch (err) {
-    return { success: false, error: (err as Error).message || "Command failed" };
+    return {
+      success: false,
+      error: (err as Error).message || "Command failed",
+    };
   }
 }
 
@@ -2271,30 +2429,68 @@ const PLATFORM_STATE_KEY: Record<string, string> = {
   webhooks: "webhook",
 };
 
+function readRemotePlatformOverride(
+  content: string,
+  platform: string,
+): boolean | null {
+  const lines = content.split(/\r?\n/);
+  let inPlatforms = false;
+  let inTarget = false;
+  for (const line of lines) {
+    if (!inPlatforms) {
+      if (/^platforms:\s*$/.test(line)) inPlatforms = true;
+      continue;
+    }
+    if (/^[^\s].+:\s*$/.test(line)) break;
+    const platformMatch = line.match(/^[ \t]{2}([A-Za-z0-9_-]+):\s*$/);
+    if (platformMatch) {
+      inTarget = platformMatch[1] === platform;
+      continue;
+    }
+    if (inTarget) {
+      const enabled = line.match(/^[ \t]{4}enabled:\s*(true|false)\b/);
+      if (enabled) return enabled[1] === "true";
+    }
+  }
+  return null;
+}
+
 export async function sshGetPlatformEnabled(
   config: SshConfig,
   profile?: string,
 ): Promise<Record<string, boolean>> {
-  void profile;
+  const result = Object.fromEntries(
+    SSH_SUPPORTED_PLATFORMS.map((p) => [p, false]),
+  ) as Record<string, boolean>;
+
   try {
     const raw = await sshReadFile(config, "$HOME/.hermes/gateway_state.json");
     if (raw.trim()) {
       const state = JSON.parse(raw);
       const platforms = state.platforms || {};
-      const result: Record<string, boolean> = {};
       for (const platform of SSH_SUPPORTED_PLATFORMS) {
         const stateKey = PLATFORM_STATE_KEY[platform] || platform;
         const p = platforms[stateKey];
-        result[platform] = p
-          ? p.state === "connected" || p.state === "running"
-          : false;
+        if (p)
+          result[platform] = p.state === "connected" || p.state === "running";
       }
-      return result;
     }
   } catch {
-    // fall through
+    // Runtime gateway state is advisory; config intent below is the UI source
+    // of truth for toggles in SSH tunnel mode.
   }
-  return Object.fromEntries(SSH_SUPPORTED_PLATFORMS.map((p) => [p, false]));
+
+  try {
+    const content = await sshReadFile(config, remoteConfigPath(profile));
+    for (const platform of SSH_SUPPORTED_PLATFORMS) {
+      const override = readRemotePlatformOverride(content, platform);
+      if (override !== null) result[platform] = override;
+    }
+  } catch {
+    // Keep runtime/default result.
+  }
+
+  return result;
 }
 
 export async function sshSetPlatformEnabled(
@@ -2486,6 +2682,257 @@ print(json.dumps(result))
   } catch {
     return [];
   }
+}
+
+// ── Discover registry over SSH ────────────────────────────────────────────────
+
+const REGISTRY_REPO = "fathah/hermes-registry";
+const REGISTRY_BRANCH = "main";
+const REGISTRY_RAW_BASE = `https://raw.githubusercontent.com/${REGISTRY_REPO}/refs/heads/${REGISTRY_BRANCH}`;
+const TREE_URL = `https://api.github.com/repos/${REGISTRY_REPO}/git/trees/${REGISTRY_BRANCH}?recursive=1`;
+
+type SshRegistryInstallResult = { success: boolean; error?: string };
+type RegistryManifest = {
+  transport?: "stdio" | "http" | "sse";
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  url?: string;
+  headers?: Record<string, string>;
+};
+
+let registryTreeCache: { at: number; blobs: string[] } | null = null;
+const REGISTRY_TREE_TTL_MS = 5 * 60 * 1000;
+
+function registrySafePathPart(value: string, label: string): string {
+  if (!/^[A-Za-z0-9_.-]+$/.test(value)) {
+    throw new Error(`Unsafe ${label}: ${value}`);
+  }
+  return value;
+}
+
+async function fetchRegistryManifest(
+  path: string,
+): Promise<RegistryManifest | null> {
+  const res = await fetch(`${REGISTRY_RAW_BASE}/${path}/manifest.json`);
+  if (!res.ok) return null;
+  return (await res.json()) as RegistryManifest;
+}
+
+async function listRegistryFolderFiles(folder: string): Promise<string[]> {
+  if (
+    !registryTreeCache ||
+    Date.now() - registryTreeCache.at > REGISTRY_TREE_TTL_MS
+  ) {
+    const res = await fetch(TREE_URL, {
+      headers: { Accept: "application/vnd.github+json" },
+    });
+    if (!res.ok) throw new Error(`Tree fetch failed (${res.status})`);
+    const json = (await res.json()) as {
+      tree?: Array<{ path: string; type: string }>;
+    };
+    registryTreeCache = {
+      at: Date.now(),
+      blobs: (json.tree ?? [])
+        .filter((b) => b.type === "blob")
+        .map((b) => b.path),
+    };
+  }
+  const prefix = `${folder}/`;
+  return registryTreeCache.blobs.filter((path) => path.startsWith(prefix));
+}
+
+function yamlScalar(value: string): string {
+  return /[:#{}[\],&*?|<>=!%@`"']/.test(value) || value.trim() !== value
+    ? JSON.stringify(value)
+    : value;
+}
+
+function renderRegistryMcpYaml(id: string, m: RegistryManifest): string {
+  const lines: string[] = [`  ${id}:`];
+  const remote = !!m.url || m.transport === "http" || m.transport === "sse";
+  if (remote) {
+    if (m.url) lines.push(`    url: ${yamlScalar(m.url)}`);
+    if (m.transport === "sse") lines.push("    transport: sse");
+    if (m.headers && Object.keys(m.headers).length) {
+      lines.push("    headers:");
+      for (const [k, v] of Object.entries(m.headers)) {
+        lines.push(`      ${k}: ${yamlScalar(String(v))}`);
+      }
+    }
+  } else {
+    if (m.command) lines.push(`    command: ${yamlScalar(m.command)}`);
+    if (m.args?.length) {
+      lines.push("    args:");
+      for (const arg of m.args)
+        lines.push(`      - ${yamlScalar(String(arg))}`);
+    }
+    if (m.env && Object.keys(m.env).length) {
+      lines.push("    env:");
+      for (const [k, v] of Object.entries(m.env)) {
+        lines.push(`      ${k}: ${yamlScalar(String(v))}`);
+      }
+    }
+  }
+  lines.push("    enabled: true");
+  return `${lines.join("\n")}\n`;
+}
+
+function listMcpNamesFromConfig(content: string): string[] {
+  const block = content.match(/^mcp_servers:\s*\n([\s\S]*?)(?=^[^\s].*:|$)/m);
+  if (!block) return [];
+  const names: string[] = [];
+  for (const match of block[1].matchAll(/^[ ]{2}([A-Za-z0-9_.-]+):\s*$/gm)) {
+    names.push(match[1]);
+  }
+  return names.sort();
+}
+
+async function sshInstallRegistryFolder(
+  config: SshConfig,
+  repoFolder: string,
+  remoteDest: string,
+): Promise<SshRegistryInstallResult> {
+  const files = await listRegistryFolderFiles(repoFolder);
+  if (files.length === 0)
+    return { success: false, error: "No files found for this entry" };
+  for (const file of files) {
+    const rel = file.slice(repoFolder.length + 1);
+    const res = await fetch(`${REGISTRY_RAW_BASE}/${file}`);
+    if (!res.ok) return { success: false, error: `Fetch failed: ${rel}` };
+    await sshWriteFile(config, `${remoteDest}/${rel}`, await res.text());
+  }
+  return { success: true };
+}
+
+async function sshInstallRegistryMcp(
+  config: SshConfig,
+  item: RegistryItem,
+  profile?: string,
+): Promise<SshRegistryInstallResult> {
+  if (!item.path) return { success: false, error: "MCP entry has no path" };
+  const manifest = await fetchRegistryManifest(item.path);
+  if (!manifest || (!manifest.url && !manifest.command)) {
+    return { success: false, error: "MCP manifest has no connection config" };
+  }
+  const configPath = remoteConfigPath(profile);
+  let content = await sshReadFile(config, configPath);
+  if (listMcpNamesFromConfig(content).includes(item.id)) {
+    return { success: false, error: "Already configured" };
+  }
+  const block = renderRegistryMcpYaml(
+    registrySafePathPart(item.id, "MCP id"),
+    manifest,
+  );
+  if (/^mcp_servers:\s*\n/m.test(content)) {
+    content = content.replace(/^mcp_servers:\s*\n/m, (m) => m + block);
+  } else {
+    if (content.length && !content.endsWith("\n")) content += "\n";
+    content += `mcp_servers:\n${block}`;
+  }
+  await sshWriteFile(config, configPath, content);
+  return { success: true };
+}
+
+async function sshInstallRegistrySkillFolder(
+  config: SshConfig,
+  item: RegistryItem,
+  profile?: string,
+): Promise<SshRegistryInstallResult> {
+  if (!item.path) return { success: false, error: "Skill entry has no path" };
+  const category = registrySafePathPart(
+    item.category || "uncategorized",
+    "skill category",
+  );
+  const id = registrySafePathPart(item.id, "skill id");
+  return sshInstallRegistryFolder(
+    config,
+    item.path,
+    `${remoteHermesHomeTilde(profile)}/skills/${category}/${id}`,
+  );
+}
+
+async function sshInstallRegistryWorkflow(
+  config: SshConfig,
+  item: RegistryItem,
+  profile?: string,
+): Promise<SshRegistryInstallResult> {
+  if (!item.path)
+    return { success: false, error: "Workflow entry has no path" };
+  const id = registrySafePathPart(item.id, "workflow id");
+  return sshInstallRegistryFolder(
+    config,
+    item.path,
+    `${remoteHermesHomeTilde(profile)}/workflows/${id}`,
+  );
+}
+
+export async function sshInstallRegistryItem(
+  config: SshConfig,
+  kind: RegistryKind,
+  item: RegistryItem,
+  profile?: string,
+): Promise<SshRegistryInstallResult> {
+  try {
+    switch (kind) {
+      case "skills":
+        return item.path
+          ? await sshInstallRegistrySkillFolder(config, item, profile)
+          : sshInstallSkill(config, item.source || item.id, profile);
+      case "mcps":
+        return await sshInstallRegistryMcp(config, item, profile);
+      case "agents":
+        await sshCreateProfile(config, item.id, true);
+        return { success: true };
+      case "workflows":
+        return await sshInstallRegistryWorkflow(config, item, profile);
+      default:
+        return { success: false, error: "Unknown item kind" };
+    }
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : "Install failed",
+    };
+  }
+}
+
+async function sshListWorkflowNames(
+  config: SshConfig,
+  profile?: string,
+): Promise<string[]> {
+  const script = `
+import json, os
+base = os.path.expanduser("${remoteHermesHomeTilde(profile)}/workflows")
+if not os.path.isdir(base):
+    print("[]")
+else:
+    names = []
+    for name in os.listdir(base):
+        names.append(__import__("re").sub(r"[.](js|mjs|ts|json)$", "", name))
+    print(json.dumps(sorted(set(names))))
+`;
+  const out = await sshPython(config, script);
+  return JSON.parse(out.trim() || "[]") as string[];
+}
+
+export async function sshListInstalledRegistry(
+  config: SshConfig,
+  profile?: string,
+): Promise<InstalledRegistry & { agents: string[] }> {
+  const skills = await sshListInstalledSkills(config, profile).catch(() => []);
+  const configContent = await sshReadFile(
+    config,
+    remoteConfigPath(profile),
+  ).catch(() => "");
+  const workflows = await sshListWorkflowNames(config, profile).catch(() => []);
+  const profiles = profile ? [] : await sshListProfiles(config).catch(() => []);
+  return {
+    skills: skills.map((s) => s.name),
+    mcps: listMcpNamesFromConfig(configContent),
+    workflows,
+    agents: profiles.map((p) => p.name).filter((name) => name !== "default"),
+  };
 }
 
 // ── Models library ─────────────────────────────────────────────────────────────
