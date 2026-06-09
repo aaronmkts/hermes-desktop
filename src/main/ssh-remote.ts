@@ -18,7 +18,7 @@ import {
 import type { MemoryInfo } from "./memory";
 import type { SessionSummary, SearchResult } from "./sessions";
 import type { CachedSession } from "./session-cache";
-import type { ToolsetInfo } from "./tools";
+import { TOOLSET_DEFS, type ToolsetInfo } from "./tools";
 import { DEFAULT_MESSAGING_PLATFORM_TOOLSETS } from "../shared/messaging-platforms";
 import type { SavedModel } from "./models";
 import type { MemoryProviderInfo } from "./installer";
@@ -240,11 +240,15 @@ export async function sshGetSkillContent(
 export async function sshInstallSkill(
   config: SshConfig,
   identifier: string,
+  profile?: string,
 ): Promise<{ success: boolean; error?: string }> {
   try {
+    const args: string[] = [];
+    if (profile && profile !== "default") args.push("-p", profile);
+    args.push("skills", "install", identifier, "--yes");
     const stdout = await sshExec(
       config,
-      `hermes skills install ${shellQuote(identifier)} --yes 2>&1`,
+      buildRemoteHermesCmd(args, " 2>&1"),
       undefined,
       120000,
     );
@@ -257,12 +261,13 @@ export async function sshInstallSkill(
 export async function sshUninstallSkill(
   config: SshConfig,
   name: string,
+  profile?: string,
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    const stdout = await sshExec(
-      config,
-      `hermes skills uninstall ${shellQuote(name)} --yes 2>&1`,
-    );
+    const args: string[] = [];
+    if (profile && profile !== "default") args.push("-p", profile);
+    args.push("skills", "uninstall", name, "--yes");
+    const stdout = await sshExec(config, buildRemoteHermesCmd(args, " 2>&1"));
     const result = classifySkillCliOutput(stdout ?? "");
     if (result.success) return result;
 
@@ -274,8 +279,9 @@ export async function sshUninstallSkill(
       `python3 -c '
 import os, sys
 name = ${shellQuote(name)}
+profile = ${shellQuote(profile || "")}
 home = os.path.expanduser("~")
-skills_dir = os.path.join(home, ".hermes", "skills")
+skills_dir = os.path.join(home, ".hermes", "profiles", profile, "skills") if profile and profile != "default" else os.path.join(home, ".hermes", "skills")
 if not os.path.isdir(skills_dir):
     sys.exit(0)
 for cat in os.listdir(skills_dir):
@@ -325,7 +331,7 @@ export async function sshSearchSkills(
   try {
     const out = await sshExec(
       config,
-      `hermes skills browse --query ${shellQuote(query)} --json 2>/dev/null || echo "[]"`,
+      `${buildRemoteHermesCmd(["skills", "browse", "--query", query, "--json"], " 2>/dev/null")} || echo "[]"`,
     );
     const parsed = JSON.parse(out.trim() || "[]");
     if (Array.isArray(parsed)) {
@@ -562,74 +568,6 @@ export async function sshResetSoul(
 }
 
 // ── Tools ────────────────────────────────────────────────────────────────────
-
-const TOOLSET_DEFS = [
-  {
-    key: "web",
-    labelKey: "tools.web.label",
-    descriptionKey: "tools.web.description",
-  },
-  {
-    key: "browser",
-    labelKey: "tools.browser.label",
-    descriptionKey: "tools.browser.description",
-  },
-  {
-    key: "terminal",
-    labelKey: "tools.terminal.label",
-    descriptionKey: "tools.terminal.description",
-  },
-  {
-    key: "file",
-    labelKey: "tools.file.label",
-    descriptionKey: "tools.file.description",
-  },
-  {
-    key: "code_execution",
-    labelKey: "tools.code_execution.label",
-    descriptionKey: "tools.code_execution.description",
-  },
-  {
-    key: "vision",
-    labelKey: "tools.vision.label",
-    descriptionKey: "tools.vision.description",
-  },
-  {
-    key: "image_gen",
-    labelKey: "tools.image_gen.label",
-    descriptionKey: "tools.image_gen.description",
-  },
-  {
-    key: "tts",
-    labelKey: "tools.tts.label",
-    descriptionKey: "tools.tts.description",
-  },
-  {
-    key: "skills",
-    labelKey: "tools.skills.label",
-    descriptionKey: "tools.skills.description",
-  },
-  {
-    key: "memory",
-    labelKey: "tools.memory.label",
-    descriptionKey: "tools.memory.description",
-  },
-  {
-    key: "session_search",
-    labelKey: "tools.session_search.label",
-    descriptionKey: "tools.session_search.description",
-  },
-  {
-    key: "clarify",
-    labelKey: "tools.clarify.label",
-    descriptionKey: "tools.clarify.description",
-  },
-  {
-    key: "delegation",
-    labelKey: "tools.delegation.label",
-    descriptionKey: "tools.delegation.description",
-  },
-];
 
 function parsePlatformToolsets(content: string): Record<string, Set<string>> {
   const toolsets: Record<string, Set<string>> = {};

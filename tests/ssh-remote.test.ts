@@ -1,5 +1,12 @@
 import { execFileSync } from "child_process";
-import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { describe, expect, it, vi } from "vitest";
@@ -14,6 +21,11 @@ import {
   buildGatewayStartCommand,
   buildGatewayStopCommand,
   buildGatewayStatusCommand,
+  sshGetToolsets,
+  sshSetToolsetEnabled,
+  sshListInstalledSkills,
+  sshGetSkillContent,
+  sshInstallSkill,
 } from "../src/main/ssh-remote";
 import type { SshConfig } from "../src/main/ssh-tunnel";
 
@@ -195,4 +207,144 @@ describe("buildRemoteHermesCmd venv probe (issue #284)", () => {
   it("still falls back to bare hermes on PATH", () => {
     expect(cmd).toContain("command -v hermes");
   });
+});
+
+describe("ssh tools and skills visibility", () => {
+  function withFakeSshRemote(run: (remoteHome: string) => Promise<void>) {
+    return async () => {
+      const remoteHome = mkdtempSync(join(tmpdir(), "hermes-ssh-remote-home-"));
+      const bin = join(remoteHome, "fake-bin");
+      mkdirSync(bin, { recursive: true });
+      const ssh = join(bin, "ssh");
+      writeFileSync(
+        ssh,
+        [
+          "#!/usr/bin/env bash",
+          'cmd="${@: -1}"',
+          'exec bash -lc "$cmd"',
+          "",
+        ].join("\n"),
+      );
+      chmodSync(ssh, 0o755);
+
+      const oldPath = process.env.PATH;
+      const oldHome = process.env.HOME;
+      process.env.PATH = `${bin}:${oldPath || ""}`;
+      process.env.HOME = remoteHome;
+      try {
+        await run(remoteHome);
+      } finally {
+        process.env.PATH = oldPath;
+        process.env.HOME = oldHome;
+        rmSync(remoteHome, { recursive: true, force: true });
+      }
+    };
+  }
+
+  it(
+    "reads toolset state from remote config, including the full desktop toolset list",
+    withFakeSshRemote(async (remoteHome) => {
+      mkdirSync(join(remoteHome, ".hermes"), { recursive: true });
+      writeFileSync(
+        join(remoteHome, ".hermes", "config.yaml"),
+        [
+          "model:",
+          "  default: gpt-4o",
+          "platform_toolsets:",
+          "  cli:",
+          "      - web",
+          "      - x_search",
+          "",
+        ].join("\n"),
+      );
+
+      const toolsets = await sshGetToolsets(sshConfig);
+      expect(toolsets.find((t) => t.key === "web")?.enabled).toBe(true);
+      expect(toolsets.find((t) => t.key === "x_search")?.enabled).toBe(true);
+      expect(toolsets.find((t) => t.key === "browser")?.enabled).toBe(false);
+      expect(toolsets.find((t) => t.key === "todo")?.enabled).toBe(false);
+    }),
+  );
+
+  it(
+    "writes profile toolset changes to the remote profile config",
+    withFakeSshRemote(async (remoteHome) => {
+      const profileDir = join(remoteHome, ".hermes", "profiles", "work");
+      mkdirSync(profileDir, { recursive: true });
+      writeFileSync(
+        join(profileDir, "config.yaml"),
+        "model:\n  default: gpt-4o\n",
+      );
+
+      await expect(
+        sshSetToolsetEnabled(sshConfig, "browser", true, "work"),
+      ).resolves.toBe(true);
+
+      const updated = readFileSync(join(profileDir, "config.yaml"), "utf-8");
+      expect(updated).toContain("platform_toolsets:");
+      expect(updated).toContain("  cli:");
+      expect(updated).toContain("      - browser");
+    }),
+  );
+
+  it(
+    "lists and reads skills from the remote profile skills directory",
+    withFakeSshRemote(async (remoteHome) => {
+      const skillDir = join(
+        remoteHome,
+        ".hermes",
+        "profiles",
+        "work",
+        "skills",
+        "research",
+        "remote-skill",
+      );
+      mkdirSync(skillDir, { recursive: true });
+      writeFileSync(
+        join(skillDir, "SKILL.md"),
+        "---\nname: Remote Skill\ndescription: From VPS\n---\n# Remote Skill\n",
+      );
+
+      const skills = await sshListInstalledSkills(sshConfig, "work");
+      expect(skills).toHaveLength(1);
+      expect(skills[0]).toMatchObject({
+        name: "remote-skill",
+        category: "research",
+        description: "From VPS",
+      });
+      expect(skills[0].path).toMatch(/^REMOTE:/);
+
+      await expect(
+        sshGetSkillContent(sshConfig, skills[0].path),
+      ).resolves.toContain("# Remote Skill");
+    }),
+  );
+
+  it(
+    "passes named profiles to remote skill install commands",
+    withFakeSshRemote(async (remoteHome) => {
+      const localBin = join(remoteHome, ".local", "bin");
+      mkdirSync(localBin, { recursive: true });
+      const hermes = join(localBin, "hermes");
+      writeFileSync(
+        hermes,
+        [
+          "#!/usr/bin/env bash",
+          'printf "%s\\n" "$@" > "$HOME/hermes-args.txt"',
+          "",
+        ].join("\n"),
+      );
+      chmodSync(hermes, 0o755);
+
+      await expect(
+        sshInstallSkill(sshConfig, "remote-skill", "work"),
+      ).resolves.toEqual({
+        success: true,
+      });
+
+      expect(readFileSync(join(remoteHome, "hermes-args.txt"), "utf-8")).toBe(
+        "-p\nwork\nskills\ninstall\nremote-skill\n--yes\n",
+      );
+    }),
+  );
 });

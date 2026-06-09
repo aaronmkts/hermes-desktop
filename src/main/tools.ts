@@ -12,7 +12,7 @@ export interface ToolsetInfo {
   enabled: boolean;
 }
 
-const TOOLSET_DEFS: {
+export const TOOLSET_DEFS: {
   key: string;
   labelKey: string;
   descriptionKey: string;

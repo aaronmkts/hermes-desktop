@@ -1435,7 +1435,7 @@ function setupIPC(): void {
     (_event, identifier: string, _profile?: string) => {
       const conn = getConnectionConfig();
       if (conn.mode === "ssh" && conn.ssh)
-        return sshInstallSkill(conn.ssh, identifier);
+        return sshInstallSkill(conn.ssh, identifier, _profile);
       return installSkill(identifier, _profile);
     },
   );
@@ -1444,7 +1444,7 @@ function setupIPC(): void {
     (_event, name: string, _profile?: string) => {
       const conn = getConnectionConfig();
       if (conn.mode === "ssh" && conn.ssh)
-        return sshUninstallSkill(conn.ssh, name);
+        return sshUninstallSkill(conn.ssh, name, _profile);
       return uninstallSkill(name, _profile);
     },
   );
