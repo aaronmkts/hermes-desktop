@@ -144,6 +144,11 @@ import {
   type IssueCode,
 } from "./config-health";
 import {
+  autofixConfigIssueForConnection,
+  getConfigFixLogForConnection,
+  getConfigHealthForConnection,
+} from "./config-health-ipc";
+import {
   listProfiles,
   createProfile,
   deleteProfile,
@@ -593,11 +598,19 @@ function setupIPC(): void {
   // Settings → Diagnose section. Auto-fixes are additive only — never
   // delete; always log to ~/.hermes/logs/config-fixes.log.
   ipcMain.handle("get-config-health", (_event, profile?: string) => {
-    return runConfigHealthCheck(profile);
+    return getConfigHealthForConnection(
+      getConnectionConfig(),
+      profile,
+      runConfigHealthCheck,
+    );
   });
 
   ipcMain.handle("rerun-config-health", (_event, profile?: string) => {
-    return runConfigHealthCheck(profile);
+    return getConfigHealthForConnection(
+      getConnectionConfig(),
+      profile,
+      runConfigHealthCheck,
+    );
   });
 
   ipcMain.handle(
@@ -608,12 +621,22 @@ function setupIPC(): void {
       profile?: string,
       context?: Record<string, string>,
     ) => {
-      return autoFixIssue(code, profile, context);
+      return autofixConfigIssueForConnection(
+        getConnectionConfig(),
+        code,
+        profile,
+        context,
+        autoFixIssue,
+      );
     },
   );
 
   ipcMain.handle("get-config-fix-log", (_event, maxEntries?: number) => {
-    return readConfigFixLog(maxEntries);
+    return getConfigFixLogForConnection(
+      getConnectionConfig(),
+      maxEntries,
+      readConfigFixLog,
+    );
   });
 
   ipcMain.handle(

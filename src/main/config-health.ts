@@ -44,7 +44,8 @@ export type IssueCode =
   | "UI_RUNTIME_ENVKEY_MISMATCH"
   | "NON_ASCII_CREDENTIAL"
   | "SIBLING_HERMES_HOME_DRIFT"
-  | "LEGACY_TOOLSET_NAME";
+  | "LEGACY_TOOLSET_NAME"
+  | "REMOTE_CONFIG_HEALTH_UNSUPPORTED";
 
 export interface ConfigHealthIssue {
   code: IssueCode;
