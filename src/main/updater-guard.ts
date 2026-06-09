@@ -22,3 +22,26 @@ export function isOrionUpdaterGuardEnabled(
 export function getOrionUpdaterBlockedMessage(): string {
   return ORION_UPDATER_BLOCKED_MESSAGE;
 }
+
+
+export interface OrionBuildStatus {
+  isOrionPatchedBuild: boolean;
+  manualUpdates: boolean;
+  label: string;
+  detail: string;
+  upstreamVersion?: string | null;
+}
+
+export function getOrionBuildStatus(
+  upstreamVersion?: string | null,
+): OrionBuildStatus {
+  return {
+    isOrionPatchedBuild: ORION_PATCHED_BUILD,
+    manualUpdates: isOrionUpdaterGuardEnabled(),
+    label: "ORION build",
+    detail: isOrionUpdaterGuardEnabled()
+      ? "Desktop updates use the ORION fork sync → .deb rebuild workflow."
+      : "Upstream desktop auto-updates are enabled for this process.",
+    upstreamVersion: upstreamVersion ?? null,
+  };
+}

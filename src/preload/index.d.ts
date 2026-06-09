@@ -84,6 +84,14 @@ interface GatewayStartResult {
  * `{key, label}` are still readable via the optional `key` field.
  * New entries written from the UI use the canonical shape.
  */
+interface OrionBuildStatus {
+  isOrionPatchedBuild: boolean;
+  manualUpdates: boolean;
+  label: string;
+  detail: string;
+  upstreamVersion?: string | null;
+}
+
 interface CredentialPoolEntry {
   id?: string;
   label?: string;
@@ -692,6 +700,7 @@ interface HermesAPI {
   downloadUpdate: () => Promise<boolean>;
   installUpdate: () => Promise<void>;
   getAppVersion: () => Promise<string>;
+  getOrionBuildStatus: () => Promise<OrionBuildStatus>;
   onUpdateAvailable: (
     callback: (info: { version: string; releaseNotes: string }) => void,
   ) => () => void;

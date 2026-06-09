@@ -61,6 +61,7 @@ import {
 } from "./mcp-servers";
 import { updaterLogger } from "./updater-log";
 import {
+  getOrionBuildStatus,
   getOrionUpdaterBlockedMessage,
   isOrionUpdaterGuardEnabled,
 } from "./updater-guard";
@@ -2175,6 +2176,10 @@ function buildMenu(): void {
 function setupUpdater(): void {
   // IPC handlers must always be registered to avoid invoke errors
   ipcMain.handle("get-app-version", () => app.getVersion());
+  let latestUpstreamVersion: string | null = null;
+  ipcMain.handle("get-orion-build-status", () =>
+    getOrionBuildStatus(latestUpstreamVersion),
+  );
 
   // Portable Windows builds set PORTABLE_EXECUTABLE_DIR. They have no
   // install location for electron-updater to replace in place, so an
@@ -2212,6 +2217,7 @@ function setupUpdater(): void {
   }
 
   autoUpdater.on("update-available", (info) => {
+    latestUpstreamVersion = info.version;
     mainWindow?.webContents.send("update-available", {
       version: info.version,
       releaseNotes: info.releaseNotes,
@@ -2229,13 +2235,18 @@ function setupUpdater(): void {
   });
 
   autoUpdater.on("error", (err) => {
+    if (orionUpdaterGuardEnabled) {
+      updaterLogger.warn(`ORION updater guard suppressed upstream updater error: ${err.message}`);
+      return;
+    }
     mainWindow?.webContents.send("update-error", err.message);
   });
 
   ipcMain.handle("check-for-updates", async () => {
     try {
       const result = await autoUpdater.checkForUpdates();
-      return result?.updateInfo?.version || null;
+      latestUpstreamVersion = result?.updateInfo?.version || null;
+      return latestUpstreamVersion;
     } catch {
       return null;
     }
@@ -2245,7 +2256,6 @@ function setupUpdater(): void {
     if (orionUpdaterGuardEnabled) {
       const message = getOrionUpdaterBlockedMessage();
       updaterLogger.warn(message);
-      mainWindow?.webContents.send("update-error", message);
       return false;
     }
 
@@ -2263,7 +2273,6 @@ function setupUpdater(): void {
     if (orionUpdaterGuardEnabled) {
       const message = getOrionUpdaterBlockedMessage();
       updaterLogger.warn(message);
-      mainWindow?.webContents.send("update-error", message);
       return false;
     }
 
