@@ -243,11 +243,10 @@ function AgentsLayer({
       // eslint-disable-next-line -- simulation state is intentionally mutated in-place each frame
       agent.frame += step * 60;
 
-      // Working agents (gateway up) sit at their desk; everyone else rests in
-      // the rest room.
-      const working = agent.status === "working";
-      const goalKey: "desk" | "rest" = working ? "desk" : "rest";
-      const goal = working
+      // Active/available agents sit at their desk; idle/offline/error/waiting agents rest.
+      const deskReady = agent.status === "active" || agent.status === "available";
+      const goalKey: "desk" | "rest" = deskReady ? "desk" : "rest";
+      const goal = deskReady
         ? deskSeatByAgent.get(agent.id)
         : restSeatByAgent.get(agent.id);
 

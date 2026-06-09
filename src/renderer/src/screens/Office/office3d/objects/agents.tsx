@@ -353,26 +353,29 @@ export const AgentModel = memo(function AgentModel({
       agent.state === "sitting" ||
       isWorkout ||
       isDancing ||
-      agent.status === "working";
+      agent.status === "active";
     const isError = agent.status === "error";
-    const isAway = agent.state === "away";
+    const isWaiting = agent.status === "waiting";
+    const isOffline = agent.status === "offline";
+    const isAvailable = agent.status === "available";
+    const isAway = agent.state === "away" || isOffline;
     // The status dot and pulse ring reflect ONLY the gateway: green when the
     // agent's gateway is running, amber when idle. A seated idle agent in the
     // rest room must not light up green.
-    const gatewayActive = agent.status === "working";
+    const gatewayActive = agent.status === "active" || agent.status === "available";
 
     if (statusDotMatRef.current) {
       statusDotMatRef.current.color.set(
-        isError ? "#ef4444" : gatewayActive ? "#22c55e" : "#f59e0b",
+        isError ? "#ef4444" : isWaiting ? "#a855f7" : isOffline ? "#64748b" : agent.status === "active" ? "#22c55e" : isAvailable ? "#38bdf8" : "#f59e0b",
       );
     }
 
     if (pulseRingRef.current && pulseRingMatRef.current) {
-      if (gatewayActive || isError) {
+      if (gatewayActive || isError || isWaiting) {
         const pulse = (Math.sin(agent.frame * 0.05) + 1) / 2;
-        const scale = isError ? 1.25 + pulse * 0.55 : 1.2 + pulse * 0.8;
+        const scale = isError ? 1.25 + pulse * 0.55 : isWaiting ? 1.18 + pulse * 0.55 : 1.2 + pulse * 0.8;
         pulseRingRef.current.scale.setScalar(scale);
-        pulseRingMatRef.current.color.set(isError ? "#ef4444" : "#22c55e");
+        pulseRingMatRef.current.color.set(isError ? "#ef4444" : isWaiting ? "#a855f7" : agent.status === "active" ? "#22c55e" : "#38bdf8");
         pulseRingMatRef.current.opacity = isError
           ? 0.7 - pulse * 0.3
           : 0.55 - pulse * 0.45;
@@ -703,13 +706,13 @@ export const AgentModel = memo(function AgentModel({
     ? "#f8fafc"
     : status === "error"
       ? "#ff9aa5"
-      : status === "working"
+      : status === "active"
         ? "#b9f99d"
         : "#a0c8ff";
   const speechBubbleBorderColor = activeSpeechBubble
     ? status === "error"
       ? "#ff7f93"
-      : status === "working"
+      : status === "active"
         ? "#93f57d"
         : "#8dc4ff"
     : "transparent";

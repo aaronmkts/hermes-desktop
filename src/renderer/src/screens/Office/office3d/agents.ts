@@ -1,5 +1,5 @@
 import { createAgentAvatarProfileFromSeed } from "./avatars/profile";
-import type { OfficeAgent } from "./core/types";
+import type { OfficeAgent, OfficeAgentStatus } from "./core/types";
 
 /**
  * A profile as surfaced by the desktop's `listProfiles` IPC. Only the fields
@@ -55,7 +55,7 @@ export function profileToOfficeAgent(profile: OfficeProfileInput): OfficeAgent {
     id,
     name: profile.name,
     subtitle: profile.model || profile.provider || null,
-    status: profile.gatewayRunning ? "working" : "idle",
+    status: (profile.gatewayRunning ? "available" : "idle") as OfficeAgentStatus,
     color,
     item: "desk",
     avatarProfile: createAgentAvatarProfileFromSeed(seed),

@@ -7,11 +7,13 @@ export type OfficeInteractionTargetId = string;
 /** An agent's org position. Everyone is an employee; exactly one can be CEO. */
 export type AgentPosition = "employee" | "ceo";
 
+export type OfficeAgentStatus = "active" | "available" | "idle" | "offline" | "error" | "waiting";
+
 export type OfficeAgent = {
   id: string;
   name: string;
   subtitle?: string | null;
-  status: "working" | "idle" | "error";
+  status: OfficeAgentStatus;
   color: string;
   item: string;
   avatarProfile?: AgentAvatarProfile | null;
@@ -19,6 +21,15 @@ export type OfficeAgent = {
   model?: string;
   provider?: string;
   gatewayRunning?: boolean;
+  stateReason?: string;
+  activeSessionId?: string | null;
+  recentSessionCount?: number;
+  recentMessageCount?: number;
+  lastInteractionAt?: number | null;
+  kanban?: { todo: number; ready: number; running: number; blocked: number; doneRecent: number };
+  platforms?: { connected: number; error: number; configured: number };
+  description?: string | null;
+  personality?: string | null;
   /** Org position; defaults to "employee" when unset. The CEO gets a desk. */
   position?: AgentPosition;
 };
