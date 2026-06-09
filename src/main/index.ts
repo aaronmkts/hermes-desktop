@@ -17,7 +17,10 @@ import icon from "../../resources/icon.png?asset";
 import type { Attachment } from "../shared/attachments";
 import { stageAttachment, clearStagedAttachments } from "./attachment-staging";
 import { persistPromptImageAttachments } from "./session-attachment-store";
-import { discoverProviderModels } from "./model-discovery";
+import {
+  discoverProviderModels,
+  getModelContextWindow,
+} from "./model-discovery";
 import {
   cleanupTempMediaFiles,
   materializeDataUrlToTemp,
@@ -82,6 +85,7 @@ import {
   ensureSshTunnelIfNeeded,
   setSshRemoteApiKey,
   getRemoteAuthHeader,
+  resolvePendingClarify,
 } from "./hermes";
 import {
   startSshTunnel,
@@ -287,6 +291,13 @@ import {
   sshRunDump,
   sshDiscoverMemoryProviders,
 } from "./ssh-remote";
+import { applyGpuPreferences, installGpuCrashGuard } from "./gpu-fallback";
+
+// Disable hardware acceleration up front if a prior launch detected a fatal
+// GPU crash (or the user forced it). MUST run before app is ready. See
+// gpu-fallback.ts / issue #592.
+applyGpuPreferences();
+installGpuCrashGuard();
 
 process.on("uncaughtException", (err) => {
   console.error("[MAIN UNCAUGHT]", err);
@@ -986,7 +997,10 @@ function setupIPC(): void {
             try {
               persistPromptImageAttachments(sessionId, message, attachments);
             } catch (err) {
-              console.warn("[sessions] Failed to persist prompt image attachments:", err);
+              console.warn(
+                "[sessions] Failed to persist prompt image attachments:",
+                err,
+              );
             }
             safeSend("chat-done", sessionId || "");
             resolveChat({ response: fullResponse, sessionId });
@@ -1027,6 +1041,9 @@ function setupIPC(): void {
           onUsage: (usage) => {
             safeSend("chat-usage", usage);
           },
+          onClarify: (req) => {
+            safeSend("chat-clarify-request", req);
+          },
         },
         profile,
         resumeSessionId,
@@ -1046,6 +1063,18 @@ function setupIPC(): void {
       currentChatAbort = null;
     }
   });
+
+  // Renderer's answer to an inline clarify card. Resolves the pending gateway
+  // request for this request_id, which forwards the answer to `clarify.respond`.
+  ipcMain.handle(
+    "clarify-respond",
+    (_event, payload: { requestId: string; answer: string }) => {
+      return resolvePendingClarify(
+        payload?.requestId ?? "",
+        payload?.answer ?? "",
+      );
+    },
+  );
 
   // Renderer-driven clipboard write (issue #298 — "Copy entire chat").
   // Routed through the main process so it doesn't depend on the renderer's
@@ -1132,6 +1161,28 @@ function setupIPC(): void {
     },
   );
 
+  // Authoritative context-window size for the active model (issue #597).
+  // Resolves the real `context_length` from the provider's /models catalogue;
+  // returns null when unavailable so the renderer falls back to its heuristic.
+  ipcMain.handle(
+    "get-model-context-window",
+    (
+      _event,
+      provider: string,
+      model: string,
+      baseUrl: string | undefined,
+      profile?: string,
+    ) => {
+      return getModelContextWindow(
+        provider,
+        model,
+        baseUrl,
+        undefined,
+        profile,
+      );
+    },
+  );
+
   // Gateway
   ipcMain.handle("start-gateway", async () => {
     const conn = getConnectionConfig();
@@ -1209,34 +1260,39 @@ function setupIPC(): void {
     },
   );
 
-  ipcMain.handle("get-messaging-platforms", async (_event, profile?: string) => {
-    const conn = getConnectionConfig();
-    if (conn.mode === "remote") {
-      return fetchRemoteMessagingPlatforms();
-    }
-    if (conn.mode === "ssh" && conn.ssh) {
-      const [envData, enabled, running, platformToolsets] = await Promise.all([
-        sshReadEnv(conn.ssh, profile),
-        sshGetPlatformEnabled(conn.ssh, profile),
-        sshGatewayStatus(conn.ssh),
-        sshGetPlatformToolsets(conn.ssh, profile),
-      ]);
+  ipcMain.handle(
+    "get-messaging-platforms",
+    async (_event, profile?: string) => {
+      const conn = getConnectionConfig();
+      if (conn.mode === "remote") {
+        return fetchRemoteMessagingPlatforms();
+      }
+      if (conn.mode === "ssh" && conn.ssh) {
+        const [envData, enabled, running, platformToolsets] = await Promise.all(
+          [
+            sshReadEnv(conn.ssh, profile),
+            sshGetPlatformEnabled(conn.ssh, profile),
+            sshGatewayStatus(conn.ssh),
+            sshGetPlatformToolsets(conn.ssh, profile),
+          ],
+        );
+        return buildDesktopMessagingPlatforms(
+          envData,
+          enabled,
+          running,
+          platformToolsets,
+        );
+      }
+      const running = isGatewayRunning(profile);
       return buildDesktopMessagingPlatforms(
-        envData,
-        enabled,
+        readEnv(profile),
+        getPlatformEnabled(profile),
         running,
-        platformToolsets,
+        getPlatformToolsets(profile),
+        readLocalGatewayPlatformStates(profile, running),
       );
-    }
-    const running = isGatewayRunning(profile);
-    return buildDesktopMessagingPlatforms(
-      readEnv(profile),
-      getPlatformEnabled(profile),
-      running,
-      getPlatformToolsets(profile),
-      readLocalGatewayPlatformStates(profile, running),
-    );
-  });
+    },
+  );
 
   ipcMain.handle(
     "update-messaging-platform",
@@ -1291,12 +1347,14 @@ function setupIPC(): void {
         return testRemoteMessagingPlatform(platform);
       }
       if (conn.mode === "ssh" && conn.ssh) {
-        const [envData, enabled, running, platformToolsets] = await Promise.all([
-          sshReadEnv(conn.ssh, profile),
-          sshGetPlatformEnabled(conn.ssh, profile),
-          sshGatewayStatus(conn.ssh),
-          sshGetPlatformToolsets(conn.ssh, profile),
-        ]);
+        const [envData, enabled, running, platformToolsets] = await Promise.all(
+          [
+            sshReadEnv(conn.ssh, profile),
+            sshGetPlatformEnabled(conn.ssh, profile),
+            sshGatewayStatus(conn.ssh),
+            sshGetPlatformToolsets(conn.ssh, profile),
+          ],
+        );
         return testDesktopMessagingPlatform(
           platform,
           buildDesktopMessagingPlatforms(
@@ -1937,8 +1995,9 @@ function setupIPC(): void {
     (_event, input: McpServerInput, profile?: string) =>
       addMcpServer(input, profile),
   );
-  ipcMain.handle("remove-mcp-server", (_event, name: string, profile?: string) =>
-    removeMcpServer(name, profile),
+  ipcMain.handle(
+    "remove-mcp-server",
+    (_event, name: string, profile?: string) => removeMcpServer(name, profile),
   );
   ipcMain.handle(
     "set-mcp-server-enabled",

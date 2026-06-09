@@ -2720,6 +2720,133 @@ body {
   background: var(--bg-hover);
 }
 
+/* Inline clarify card — a mid-turn question rendered in the transcript. */
+.chat-clarify {
+  margin-top: 8px;
+  margin-left: 42px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent, #2563eb);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 640px;
+}
+
+.chat-clarify-question {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.chat-clarify-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.chat-clarify-choice {
+  text-align: left;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-size: 13px;
+  cursor: pointer;
+  transition:
+    background var(--transition),
+    border-color var(--transition);
+}
+
+.chat-clarify-choice:hover {
+  border-color: var(--accent, #2563eb);
+  background: var(--bg-hover);
+}
+
+.chat-clarify-choice:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.chat-clarify-open {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.chat-clarify-textarea {
+  width: 100%;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-size: 14px;
+  font-family: inherit;
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+.chat-clarify-textarea:focus {
+  outline: none;
+  border-color: var(--accent, #2563eb);
+}
+
+.chat-clarify-send {
+  align-self: flex-end;
+  padding: 6px 16px;
+  border: none;
+  border-radius: 6px;
+  background: var(--accent, #2563eb);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.chat-clarify-send:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.chat-clarify-skip {
+  align-self: flex-start;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.chat-clarify-skip:hover {
+  color: var(--text-primary);
+  text-decoration: underline;
+}
+
+.chat-clarify--resolved {
+  opacity: 0.85;
+}
+
+.chat-clarify-answer {
+  font-size: 13px;
+  color: var(--text-secondary);
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: var(--bg-base);
+}
+
+.chat-clarify-error {
+  font-size: 12px;
+  color: var(--danger, #ef4444);
+  margin-top: 2px;
+}
+
 /* Override Tailwind preflight spacing inside agent bubbles */
 .chat-bubble-agent p {
   margin: 0 0 0.85em !important;
@@ -2867,12 +2994,72 @@ body {
 }
 
 .chat-queue-indicator {
-  text-align: center;
-  padding: 6px 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+
   font-size: 12px;
   color: var(--text-secondary);
-  background: var(--bg-secondary);
-  border-top: 1px solid var(--border);
+  margin-bottom: 15px;
+}
+
+.chat-queue-icon {
+  flex-shrink: 0;
+  color: var(--accent, #8b7cf6);
+}
+
+.chat-queue-single {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Single-message row lays the icon + text out horizontally. */
+.chat-queue-indicator:not(.chat-queue-collapsible) {
+  flex-direction: row;
+  align-items: center;
+}
+
+.chat-queue-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.chat-queue-toggle:hover {
+  color: var(--text-primary);
+}
+
+.chat-queue-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0 0;
+  width: 100%;
+  max-height: 140px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.chat-queue-item {
+  max-width: 100%;
+  padding: 3px 8px;
+  border-radius: var(--radius-sm, 6px);
+  background: var(--bg-tertiary, rgba(255, 255, 255, 0.04));
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Input area */
