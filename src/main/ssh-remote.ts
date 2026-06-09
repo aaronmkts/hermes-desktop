@@ -25,6 +25,11 @@ import type { MemoryProviderInfo } from "./installer";
 import { t } from "../shared/i18n";
 import { getAppLocale } from "./locale";
 import { HIDDEN_SUBPROCESS_OPTIONS } from "./process-options";
+import {
+  isValidNamedProfileName,
+  isValidProfileName,
+  PROFILE_NAME_ERROR,
+} from "./utils";
 
 // ── SSH exec core ────────────────────────────────────────────────────────────
 
@@ -1426,22 +1431,34 @@ export async function sshListProfiles(
   config: SshConfig,
 ): Promise<SshProfileInfo[]> {
   const script = `
-import os, json
+import os, json, re
 hermes_home = os.path.expanduser("~/.hermes")
 profiles_dir = os.path.join(hermes_home, "profiles")
-profiles = []
+active_file = os.path.join(hermes_home, "active_profile")
+name_re = re.compile(r"^[a-z0-9_][a-z0-9_-]{0,63}$")
+
+try:
+    active = open(active_file, encoding="utf-8").read().strip() or "default"
+except Exception:
+    active = "default"
+if active != "default" and not name_re.match(active):
+    active = "default"
+
 
 def read_config(path):
     model, provider = "", "auto"
     config_file = os.path.join(path, "config.yaml")
     if os.path.exists(config_file):
-        content = open(config_file).read()
-        import re
-        m = re.search(r'^\\s*default:\\s*["\\'\\']?([^"\\'\\' \\n#]+)["\\'\\']?', content, re.M)
+        try:
+            content = open(config_file, encoding="utf-8").read()
+        except Exception:
+            content = ""
+        m = re.search(r'^\\s*default:\\s*["\\']?([^"\\'\\n#]+)["\\']?', content, re.M)
         if m: model = m.group(1).strip()
-        p = re.search(r'^\\s*provider:\\s*["\\'\\']?([^"\\'\\' \\n#]+)["\\'\\']?', content, re.M)
+        p = re.search(r'^\\s*provider:\\s*["\\']?([^"\\'\\n#]+)["\\']?', content, re.M)
         if p: provider = p.group(1).strip()
     return model, provider
+
 
 def count_skills(path):
     skills_dir = os.path.join(path, "skills")
@@ -1455,40 +1472,45 @@ def count_skills(path):
                         count += 1
     return count
 
+
 def gw_running(path):
     pid_file = os.path.join(path, "gateway.pid")
     if not os.path.exists(pid_file): return False
     try:
-        pid = int(open(pid_file).read().strip())
+        raw = open(pid_file, encoding="utf-8").read().strip()
+        if raw.startswith("{"):
+            pid = int(json.loads(raw).get("pid", 0))
+        else:
+            pid = int(raw)
         os.kill(pid, 0)
         return True
-    except:
+    except Exception:
         return False
 
-# Default profile
-model, provider = read_config(hermes_home)
-profiles.append({
-    "name": "default", "path": hermes_home, "isDefault": True, "isActive": True,
-    "model": model, "provider": provider,
-    "hasEnv": os.path.exists(os.path.join(hermes_home, ".env")),
-    "hasSoul": os.path.exists(os.path.join(hermes_home, "SOUL.md")),
-    "skillCount": count_skills(hermes_home),
-    "gatewayRunning": gw_running(hermes_home)
-})
 
+def profile_info(name, path, is_default):
+    model, provider = read_config(path)
+    return {
+        "name": name,
+        "path": path,
+        "isDefault": is_default,
+        "isActive": active == name,
+        "model": model,
+        "provider": provider,
+        "hasEnv": os.path.exists(os.path.join(path, ".env")),
+        "hasSoul": os.path.exists(os.path.join(path, "SOUL.md")),
+        "skillCount": count_skills(path),
+        "gatewayRunning": gw_running(path),
+    }
+
+profiles = [profile_info("default", hermes_home, True)]
 if os.path.isdir(profiles_dir):
     for name in sorted(os.listdir(profiles_dir)):
-        p = os.path.join(profiles_dir, name)
-        if not os.path.isdir(p): continue
-        model, provider = read_config(p)
-        profiles.append({
-            "name": name, "path": p, "isDefault": False, "isActive": False,
-            "model": model, "provider": provider,
-            "hasEnv": os.path.exists(os.path.join(p, ".env")),
-            "hasSoul": os.path.exists(os.path.join(p, "SOUL.md")),
-            "skillCount": count_skills(p),
-            "gatewayRunning": gw_running(p)
-        })
+        if name.startswith(".") or not name_re.match(name):
+            continue
+        path = os.path.join(profiles_dir, name)
+        if os.path.isdir(path):
+            profiles.append(profile_info(name, path, False))
 
 print(json.dumps(profiles))
 `;
@@ -1499,7 +1521,7 @@ print(json.dumps(profiles))
     return [
       {
         name: "default",
-        path: "~/.hermes",
+        path: "$HOME/.hermes",
         isDefault: true,
         isActive: true,
         model: "",
@@ -1517,43 +1539,102 @@ export async function sshCreateProfile(
   config: SshConfig,
   name: string,
   clone: boolean,
-): Promise<boolean> {
+): Promise<{ success: boolean; error?: string }> {
+  if (name === "default") {
+    return { success: false, error: "Cannot create the default profile" };
+  }
+  if (!isValidNamedProfileName(name)) {
+    return { success: false, error: PROFILE_NAME_ERROR };
+  }
+
+  const script = `
+import json, os, shutil, sys
+payload = json.loads(sys.stdin.read() or "{}")
+name = payload["name"]
+clone = bool(payload.get("clone"))
+hermes_home = os.path.expanduser("~/.hermes")
+profiles_dir = os.path.join(hermes_home, "profiles")
+target = os.path.join(profiles_dir, name)
+if os.path.exists(target):
+    raise SystemExit(f"Profile '{name}' already exists at {target}")
+os.makedirs(profiles_dir, exist_ok=True)
+if clone:
+    def ignore(src, names):
+        ignored = {"profiles", "active_profile", "gateway.pid", "gateway_state.json"}
+        if os.path.abspath(src) == os.path.abspath(hermes_home):
+            return ignored.intersection(names)
+        return set()
+    shutil.copytree(hermes_home, target, ignore=ignore)
+else:
+    os.makedirs(target, exist_ok=False)
+print(json.dumps({"success": True, "path": target}))
+`;
+
   try {
-    const safe = name.replace(/[^a-zA-Z0-9_-]/g, "");
-    if (!safe) return false;
-    const quoted = shellQuote(safe);
-    if (clone) {
-      await sshExec(
-        config,
-        `hermes profiles create ${quoted} --clone-from default 2>&1 || mkdir -p ~/.hermes/profiles/${quoted}`,
-      );
-    } else {
-      await sshExec(
-        config,
-        `hermes profiles create ${quoted} 2>&1 || mkdir -p ~/.hermes/profiles/${quoted}`,
-      );
-    }
-    return true;
-  } catch {
-    return false;
+    await sshPython(config, script, pythonJsonInput({ name, clone }));
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: (err as Error).message || "Command failed" };
   }
 }
 
 export async function sshDeleteProfile(
   config: SshConfig,
   name: string,
-): Promise<boolean> {
+): Promise<{ success: boolean; error?: string }> {
+  if (name === "default") {
+    return { success: false, error: "Cannot delete the default profile" };
+  }
+  if (!isValidNamedProfileName(name)) {
+    return { success: false, error: PROFILE_NAME_ERROR };
+  }
+
+  const script = `
+import json, os, shutil, sys
+payload = json.loads(sys.stdin.read() or "{}")
+name = payload["name"]
+target = os.path.join(os.path.expanduser("~/.hermes"), "profiles", name)
+if os.path.isdir(target):
+    shutil.rmtree(target)
+print(json.dumps({"success": True}))
+`;
+
   try {
-    const safe = name.replace(/[^a-zA-Z0-9_-]/g, "");
-    if (!safe || safe === "default") return false;
-    const quoted = shellQuote(safe);
-    await sshExec(
-      config,
-      `hermes profiles delete ${quoted} --yes 2>&1 || rm -rf ~/.hermes/profiles/${quoted}`,
-    );
-    return true;
-  } catch {
-    return false;
+    await sshPython(config, script, pythonJsonInput({ name }));
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: (err as Error).message || "Command failed" };
+  }
+}
+
+export async function sshSetActiveProfile(
+  config: SshConfig,
+  name: string,
+): Promise<{ success: boolean; error?: string }> {
+  if (!isValidProfileName(name)) {
+    return { success: false, error: PROFILE_NAME_ERROR };
+  }
+
+  const script = `
+import json, os, sys
+payload = json.loads(sys.stdin.read() or "{}")
+name = payload["name"]
+hermes_home = os.path.expanduser("~/.hermes")
+if name != "default":
+    target = os.path.join(hermes_home, "profiles", name)
+    if not os.path.isdir(target):
+        raise SystemExit(f"Profile '{name}' does not exist at {target}")
+os.makedirs(hermes_home, exist_ok=True)
+with open(os.path.join(hermes_home, "active_profile"), "w", encoding="utf-8") as fh:
+    fh.write(name + "\\n")
+print(json.dumps({"success": True}))
+`;
+
+  try {
+    await sshPython(config, script, pythonJsonInput({ name }));
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: (err as Error).message || "Command failed" };
   }
 }
 

@@ -256,6 +256,7 @@ import {
   sshListProfiles,
   sshCreateProfile,
   sshDeleteProfile,
+  sshSetActiveProfile,
   sshGatewayStatus,
   sshStartGateway,
   sshStopGateway,
@@ -1317,18 +1318,23 @@ function setupIPC(): void {
       return sshDeleteProfile(conn.ssh, name);
     return deleteProfile(name);
   });
-  ipcMain.handle("set-active-profile", (_event, name: string) => {
-    if (getConnectionConfig().mode !== "ssh") {
-      setActiveProfile(name);
-      // The desktop now follows this profile: chat/health resolve their URL
-      // from the active profile's own port. Drop the cached health flag so the
-      // next check probes the new gateway rather than the previous profile's.
-      notifyProfileSwitched();
-      // Bring the activated profile's own gateway up if it isn't already —
-      // without stopping any other profile's gateway (their bots stay online).
-      if (!isRemoteMode() && !isGatewayRunning(name)) {
-        startGateway(name);
-      }
+  ipcMain.handle("set-active-profile", async (_event, name: string) => {
+    const conn = getConnectionConfig();
+    if (conn.mode === "ssh" && conn.ssh) {
+      const result = await sshSetActiveProfile(conn.ssh, name);
+      if (result.success) notifyProfileSwitched();
+      return result.success;
+    }
+
+    setActiveProfile(name);
+    // The desktop now follows this profile: chat/health resolve their URL
+    // from the active profile's own port. Drop the cached health flag so the
+    // next check probes the new gateway rather than the previous profile's.
+    notifyProfileSwitched();
+    // Bring the activated profile's own gateway up if it isn't already —
+    // without stopping any other profile's gateway (their bots stay online).
+    if (!isRemoteMode() && !isGatewayRunning(name)) {
+      startGateway(name);
     }
     return true;
   });
