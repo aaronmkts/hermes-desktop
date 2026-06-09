@@ -121,6 +121,7 @@ import {
   getModelConfig,
   setModelConfig,
   getCredentialPool,
+  getProviderCredentialStatus,
   setCredentialPool,
   addCredentialPoolEntry,
   getConnectionConfig,
@@ -293,6 +294,10 @@ import {
   sshDiscoverMemoryProviders,
   sshInstallRegistryItem,
   sshListInstalledRegistry,
+  sshGetCredentialPool,
+  sshSetCredentialPool,
+  sshAddCredentialPoolEntry,
+  sshGetProviderCredentialStatus,
 } from "./ssh-remote";
 import { applyGpuPreferences, installGpuCrashGuard } from "./gpu-fallback";
 
@@ -1616,17 +1621,25 @@ function setupIPC(): void {
   // credential pool helpers default to the currently active profile's
   // auth.json (see config.ts:authFilePath), so the renderer can pass an
   // explicit profile or rely on the active-profile fallback.
-  ipcMain.handle("get-credential-pool", (_event, profile?: string) =>
-    getCredentialPool(profile),
-  );
+  ipcMain.handle("get-credential-pool", (_event, profile?: string) => {
+    const conn = getConnectionConfig();
+    if (conn.mode === "ssh" && conn.ssh)
+      return sshGetCredentialPool(conn.ssh, profile);
+    return getCredentialPool(profile);
+  });
   ipcMain.handle(
     "set-credential-pool",
-    (
+    async (
       _event,
       provider: string,
       entries: Array<Record<string, unknown>>,
       profile?: string,
     ) => {
+      const conn = getConnectionConfig();
+      if (conn.mode === "ssh" && conn.ssh) {
+        await sshSetCredentialPool(conn.ssh, provider, entries, profile);
+        return true;
+      }
       setCredentialPool(provider, entries, profile);
       return true;
     },
@@ -1645,7 +1658,20 @@ function setupIPC(): void {
       label: string,
       profile?: string,
     ) => {
+      const conn = getConnectionConfig();
+      if (conn.mode === "ssh" && conn.ssh)
+        return sshAddCredentialPoolEntry(conn.ssh, provider, apiKey, label, profile);
       return addCredentialPoolEntry(provider, apiKey, label, profile);
+    },
+  );
+
+  ipcMain.handle(
+    "get-provider-credential-status",
+    (_event, provider: string, profile?: string) => {
+      const conn = getConnectionConfig();
+      if (conn.mode === "ssh" && conn.ssh)
+        return sshGetProviderCredentialStatus(conn.ssh, provider, profile);
+      return getProviderCredentialStatus(provider, profile);
     },
   );
 

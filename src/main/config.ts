@@ -1495,7 +1495,7 @@ function authFilePath(profile?: string): string {
  * (otherwise a user's existing manual entries would vanish on first
  * read). New writes always use the full canonical shape.
  */
-interface CredentialEntry {
+export interface CredentialEntry {
   id?: string;
   label?: string;
   auth_type?: "api_key" | "oauth_device_code" | string;
@@ -1614,6 +1614,63 @@ export function addCredentialPoolEntry(
   return next;
 }
 
+
+
+function credentialEntryHasSecret(entry: CredentialEntry | undefined): boolean {
+  return !!(
+    entry &&
+    (String(entry.access_token || "").trim() ||
+      String(entry.refresh_token || "").trim() ||
+      String(entry.api_key || "").trim() ||
+      String(entry.key || "").trim())
+  );
+}
+
+export interface ProviderCredentialStatus {
+  provider: string;
+  configured: boolean;
+  source: "env" | "auth.json" | "honcho.json" | "missing";
+  locationLabel: string;
+}
+
+function hasHonchoJsonCredential(profile?: string): boolean {
+  try {
+    const p = join(profileHome(profile || getActiveProfileNameSync()), "honcho.json");
+    if (!existsSync(p)) return false;
+    const parsed = JSON.parse(readFileSync(p, "utf-8")) as Record<string, unknown>;
+    return !!(
+      String(parsed.apiKey || "").trim() ||
+      String(parsed.api_key || "").trim() ||
+      String(parsed.key || "").trim()
+    );
+  } catch {
+    return false;
+  }
+}
+
+export function getProviderCredentialStatus(
+  provider: string,
+  profile?: string,
+): ProviderCredentialStatus {
+  const cleanProvider = provider.trim();
+  if (!cleanProvider) {
+    return { provider, configured: false, source: "missing", locationLabel: "Missing" };
+  }
+  if (cleanProvider === "honcho") {
+    const env = readEnv(profile);
+    if (String(env.HONCHO_API_KEY || "").trim()) {
+      return { provider, configured: true, source: "env", locationLabel: ".env" };
+    }
+    if (hasHonchoJsonCredential(profile)) {
+      return { provider, configured: true, source: "honcho.json", locationLabel: "honcho.json" };
+    }
+    return { provider, configured: false, source: "missing", locationLabel: "Missing" };
+  }
+  return hasOAuthCredentials(cleanProvider, profile)
+    ? { provider, configured: true, source: "auth.json", locationLabel: "auth.json" }
+    : { provider, configured: false, source: "missing", locationLabel: "Missing" };
+}
+
 /**
  * True iff the given provider has usable OAuth or stored-credential evidence
  * in auth.json. Recognized fields are `access_token`, `refresh_token`, and
@@ -1644,12 +1701,7 @@ export function hasOAuthCredentials(
       const entry = (providers as Record<string, CredentialEntry>)[
         cleanProvider
       ];
-      if (
-        entry &&
-        (String(entry.access_token || "").trim() ||
-          String(entry.refresh_token || "").trim() ||
-          String(entry.api_key || "").trim())
-      ) {
+      if (credentialEntryHasSecret(entry)) {
         return true;
       }
     }
@@ -1661,15 +1713,7 @@ export function hasOAuthCredentials(
         : undefined;
     if (
       Array.isArray(entries) &&
-      entries.some(
-        (entry) =>
-          !!(
-            entry &&
-            (String(entry.api_key || "").trim() ||
-              String(entry.access_token || "").trim() ||
-              String(entry.refresh_token || "").trim())
-          ),
-      )
+      entries.some((entry) => credentialEntryHasSecret(entry))
     ) {
       return true;
     }

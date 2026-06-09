@@ -32,7 +32,7 @@ import { t } from "../shared/i18n";
 import { getAppLocale } from "./locale";
 import { HIDDEN_SUBPROCESS_OPTIONS } from "./process-options";
 import { canonicalProviderBaseUrl } from "./provider-registry";
-import { upsertBlockChild } from "./config";
+import { buildCredentialPoolEntry, upsertBlockChild, type CredentialEntry, type ProviderCredentialStatus } from "./config";
 import {
   isValidNamedProfileName,
   isValidProfileName,
@@ -1197,11 +1197,7 @@ export function sshGetHermesHome(_config: SshConfig, profile?: string): string {
   return remoteHermesHomeTilde(profile);
 }
 
-type SshCredentialEntry = {
-  access_token?: string;
-  refresh_token?: string;
-  api_key?: string;
-};
+type SshCredentialEntry = CredentialEntry;
 
 function sshAuthPath(profile?: string): string {
   return `${remoteHermesHome(profile)}/auth.json`;
@@ -1224,7 +1220,8 @@ function authStoreHasProviderCredentials(
     providerEntry &&
     (String(providerEntry.access_token || "").trim() ||
       String(providerEntry.refresh_token || "").trim() ||
-      String(providerEntry.api_key || "").trim())
+      String(providerEntry.api_key || "").trim() ||
+      String(providerEntry.key || "").trim())
   ) {
     return true;
   }
@@ -1237,10 +1234,112 @@ function authStoreHasProviderCredentials(
             entry &&
             (String(entry.api_key || "").trim() ||
               String(entry.access_token || "").trim() ||
-              String(entry.refresh_token || "").trim())
+              String(entry.refresh_token || "").trim() ||
+              String(entry.key || "").trim())
           ),
       )
     : false;
+}
+
+
+function remoteHonchoPath(profile?: string): string {
+  return `${remoteHermesHome(profile)}/honcho.json`;
+}
+
+async function sshReadAuthStore(config: SshConfig, profile?: string): Promise<Record<string, unknown>> {
+  const raw = await sshReadFile(config, sshAuthPath(profile));
+  if (!raw.trim()) return {};
+  try {
+    return JSON.parse(raw) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+}
+
+async function sshWriteAuthStore(
+  config: SshConfig,
+  store: Record<string, unknown>,
+  profile?: string,
+): Promise<void> {
+  await sshWriteFile(config, sshAuthPath(profile), JSON.stringify(store, null, 2));
+}
+
+export async function sshGetCredentialPool(
+  config: SshConfig,
+  profile?: string,
+): Promise<Record<string, CredentialEntry[]>> {
+  const store = await sshReadAuthStore(config, profile);
+  const pool = store.credential_pool;
+  return pool && typeof pool === "object"
+    ? (pool as Record<string, CredentialEntry[]>)
+    : {};
+}
+
+export async function sshSetCredentialPool(
+  config: SshConfig,
+  provider: string,
+  entries: CredentialEntry[],
+  profile?: string,
+): Promise<void> {
+  const store = await sshReadAuthStore(config, profile);
+  if (!store.credential_pool || typeof store.credential_pool !== "object") {
+    store.credential_pool = {};
+  }
+  (store.credential_pool as Record<string, CredentialEntry[]>)[provider] = entries;
+  await sshWriteAuthStore(config, store, profile);
+}
+
+export async function sshAddCredentialPoolEntry(
+  config: SshConfig,
+  provider: string,
+  apiKey: string,
+  label: string,
+  profile?: string,
+): Promise<CredentialEntry[]> {
+  const existing = (await sshGetCredentialPool(config, profile))[provider] || [];
+  const entry = buildCredentialPoolEntry(provider, apiKey, label, existing);
+  const next = [...existing, entry];
+  await sshSetCredentialPool(config, provider, next, profile);
+  return next;
+}
+
+async function sshHasHonchoJsonCredential(
+  config: SshConfig,
+  profile?: string,
+): Promise<boolean> {
+  const raw = await sshReadFile(config, remoteHonchoPath(profile));
+  if (!raw.trim()) return false;
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    return !!(
+      String(parsed.apiKey || "").trim() ||
+      String(parsed.api_key || "").trim() ||
+      String(parsed.key || "").trim()
+    );
+  } catch {
+    return false;
+  }
+}
+
+export async function sshGetProviderCredentialStatus(
+  config: SshConfig,
+  provider: string,
+  profile?: string,
+): Promise<ProviderCredentialStatus> {
+  const cleanProvider = provider.trim();
+  if (cleanProvider === "honcho") {
+    const env = await sshReadEnv(config, profile);
+    if (String(env.HONCHO_API_KEY || "").trim()) {
+      return { provider, configured: true, source: "env", locationLabel: ".env on VPS" };
+    }
+    if (await sshHasHonchoJsonCredential(config, profile)) {
+      return { provider, configured: true, source: "honcho.json", locationLabel: "honcho.json on VPS" };
+    }
+    return { provider, configured: false, source: "missing", locationLabel: "Missing on VPS" };
+  }
+  return (await sshHasOAuthCredentials(config, cleanProvider, profile))
+    ? { provider, configured: true, source: "auth.json", locationLabel: "auth.json on VPS" }
+    : { provider, configured: false, source: "missing", locationLabel: "Missing on VPS" };
 }
 
 export async function sshHasOAuthCredentials(
