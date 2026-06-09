@@ -25,6 +25,7 @@ describe("ORION updater guard", () => {
     expect(status.manualUpdates).toBe(true);
     expect(status.label).toBe("ORION build");
     expect(status.upstreamVersion).toBe("0.5.9");
+    expect(status.detail).toContain("Ask ORION to sync upstream");
   });
 
   it("returns clear rebuild instructions for blocked downloads", () => {
@@ -32,6 +33,6 @@ describe("ORION updater guard", () => {
 
     expect(message).toContain("ORION-patched");
     expect(message).toContain("notification-only");
-    expect(message).toContain("Rebuild orion-vps-control-plane");
+    expect(message).toContain("Ask ORION to sync upstream");
   });
 });

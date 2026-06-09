@@ -291,6 +291,13 @@ export type TranscriptionRoute =
   | { provider: "openai-compatible"; baseUrl: string; apiKey: string; model: string }
   | { provider: "gemini"; apiKey: string; model: string };
 
+export function mergeTranscriptionEnv(
+  defaultEnv: Record<string, string | undefined>,
+  profileEnv: Record<string, string | undefined>,
+): Record<string, string | undefined> {
+  return { ...defaultEnv, ...profileEnv };
+}
+
 export function resolveTranscriptionRoute(input: {
   baseUrl?: string | null;
   env: Record<string, string | undefined>;
@@ -400,8 +407,8 @@ export async function transcribeAudio(
   const baseUrl = (mc.baseUrl || "").replace(/\/+$/, "");
   const conn = getConnectionConfig();
   const env = conn.mode === "ssh" && conn.ssh
-    ? await sshReadEnv(conn.ssh, resolved)
-    : readEnv(resolved);
+    ? mergeTranscriptionEnv(await sshReadEnv(conn.ssh), resolved ? await sshReadEnv(conn.ssh, resolved) : {})
+    : mergeTranscriptionEnv(readEnv(), resolved ? readEnv(resolved) : {});
   const route = resolveTranscriptionRoute({ baseUrl, env });
   if (!route) throw new Error(transcriptionErrorMessage({ baseUrl, env }));
 

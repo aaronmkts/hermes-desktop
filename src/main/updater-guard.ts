@@ -10,8 +10,8 @@ export const ORION_PATCHED_BUILD = true;
 
 export const ORION_UPDATER_BLOCKED_MESSAGE =
   "This is an ORION-patched Hermes Desktop build. Upstream release downloads " +
-  "are notification-only to avoid overwriting ORION patches. Rebuild " +
-  "orion-vps-control-plane to update this build.";
+  "are notification-only to avoid overwriting ORION patches. Ask ORION to sync upstream, " +
+  "reapply fork patches, rebuild the .deb, and relaunch the desktop app.";
 
 export function isOrionUpdaterGuardEnabled(
   env: NodeJS.ProcessEnv = process.env,
@@ -40,7 +40,9 @@ export function getOrionBuildStatus(
     manualUpdates: isOrionUpdaterGuardEnabled(),
     label: "ORION build",
     detail: isOrionUpdaterGuardEnabled()
-      ? "Desktop updates use the ORION fork sync → .deb rebuild workflow."
+      ? upstreamVersion
+        ? `Ask ORION to sync upstream ${upstreamVersion}, rebuild the .deb, and relaunch.`
+        : "Ask ORION to sync upstream, rebuild the .deb, and relaunch."
       : "Upstream desktop auto-updates are enabled for this process.",
     upstreamVersion: upstreamVersion ?? null,
   };

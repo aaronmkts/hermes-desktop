@@ -1,8 +1,20 @@
 import { describe, expect, it } from "vitest";
 import {
+  mergeTranscriptionEnv,
   resolveTranscriptionRoute,
   transcriptionErrorMessage,
 } from "../src/main/hermes";
+
+describe("mergeTranscriptionEnv", () => {
+  it("keeps default shared transcription keys while allowing profile-specific overrides", () => {
+    expect(
+      mergeTranscriptionEnv(
+        { GOOGLE_API_KEY: "default-google", CUSTOM_API_KEY: "default-custom" },
+        { CUSTOM_API_KEY: "profile-custom", EMPTY: "" },
+      ),
+    ).toEqual({ GOOGLE_API_KEY: "default-google", CUSTOM_API_KEY: "profile-custom", EMPTY: "" });
+  });
+});
 
 describe("resolveTranscriptionRoute", () => {
   it("does not send audio to the Codex chat backend and falls back to Gemini when Google API key is available", () => {

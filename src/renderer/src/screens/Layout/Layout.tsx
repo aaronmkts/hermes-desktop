@@ -351,7 +351,7 @@ function Layout({
               <Download size={13} />
               {orionBuildStatus?.manualUpdates && (
                 <span>
-                  ORION build{orionBuildStatus.upstreamVersion ? `: upstream ${orionBuildStatus.upstreamVersion} available` : ": manual updates"}
+                  {orionBuildStatus.upstreamVersion ? `Ask ORION to sync upstream ${orionBuildStatus.upstreamVersion}` : "ORION build: manual updates"}
                 </span>
               )}
               {!orionBuildStatus?.manualUpdates && updateState === "available" && (
