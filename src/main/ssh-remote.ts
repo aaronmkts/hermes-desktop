@@ -1220,8 +1220,7 @@ function authStoreHasProviderCredentials(
     providerEntry &&
     (String(providerEntry.access_token || "").trim() ||
       String(providerEntry.refresh_token || "").trim() ||
-      String(providerEntry.api_key || "").trim() ||
-      String(providerEntry.key || "").trim())
+      String(providerEntry.api_key || "").trim())
   ) {
     return true;
   }
@@ -1234,8 +1233,7 @@ function authStoreHasProviderCredentials(
             entry &&
             (String(entry.api_key || "").trim() ||
               String(entry.access_token || "").trim() ||
-              String(entry.refresh_token || "").trim() ||
-              String(entry.key || "").trim())
+              String(entry.refresh_token || "").trim())
           ),
       )
     : false;

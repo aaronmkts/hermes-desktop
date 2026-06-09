@@ -1621,8 +1621,7 @@ function credentialEntryHasSecret(entry: CredentialEntry | undefined): boolean {
     entry &&
     (String(entry.access_token || "").trim() ||
       String(entry.refresh_token || "").trim() ||
-      String(entry.api_key || "").trim() ||
-      String(entry.key || "").trim())
+      String(entry.api_key || "").trim())
   );
 }
 
