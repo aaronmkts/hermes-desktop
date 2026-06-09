@@ -27,7 +27,6 @@ interface OrionBuildStatus {
   detail: string;
   upstreamVersion?: string | null;
 }
-}
 
 interface CredentialPoolEntry {
   id?: string;
