@@ -1,15 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Crown, RefreshCw, Users, X } from "lucide-react";
+import { Crown, MessageCircle, Power, RefreshCw, Users, X } from "lucide-react";
 import { useI18n } from "../../components/useI18n";
 import oneChatIcon from "../../assets/images/one-chat.svg";
 import OneChatModal from "./OneChatModal";
 import Office3D from "./office3d/Office3D";
 import { profilesToOfficeAgents } from "./office3d/agents";
 import type { OfficeAgent } from "./office3d/core/types";
+import { buildOfficeAgentActions, buildOfficeAgentStatusRows, type OfficeNavigationTarget } from "./officeActions";
 
 interface OfficeProps {
   profile?: string;
   visible?: boolean;
+  onNavigate?: (target: OfficeNavigationTarget) => void;
+  onSelectProfile?: (profile: string) => void;
 }
 
 // The CEO assignment is desktop-local UI state (one agent at a time), persisted
@@ -28,13 +31,14 @@ function readStoredCeo(): string | null {
  * The Office tab. Renders a native, in-renderer 3D office (no external dev
  * server / webview) where each Hermes profile appears as an interactive agent.
  */
-function Office({ profile, visible }: OfficeProps): React.JSX.Element {
+function Office({ profile, visible, onNavigate, onSelectProfile }: OfficeProps): React.JSX.Element {
   const { t } = useI18n();
   const [agents, setAgents] = useState<OfficeAgent[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [ceoId, setCeoId] = useState<string | null>(readStoredCeo);
   const [chatOpen, setChatOpen] = useState(false);
+  const [actionBusy, setActionBusy] = useState<string | null>(null);
   const [operatorStatus, setOperatorStatus] = useState<{
     build?: Awaited<ReturnType<typeof window.hermesAPI.getOrionBuildStatus>>;
     gatewayRunning?: boolean;
@@ -167,6 +171,19 @@ function Office({ profile, visible }: OfficeProps): React.JSX.Element {
 
   const selectedAgent =
     positionedAgents.find((a) => a.id === selectedId) ?? null;
+  const selectedActions = selectedAgent
+    ? buildOfficeAgentActions(selectedAgent, {
+        chat: true,
+        restartGateway: typeof window.hermesAPI.restartGateway === "function",
+        gateway: Boolean(onNavigate),
+        providers: Boolean(onNavigate),
+        kanban: Boolean(onNavigate),
+        sessions: Boolean(onNavigate),
+      })
+    : [];
+  const selectedStatusRows = selectedAgent
+    ? buildOfficeAgentStatusRows(selectedAgent)
+    : [];
   const selectedIsCeo = selectedAgent?.position === "ceo";
   const selectedStatusColor =
     selectedAgent?.status === "working"
@@ -174,6 +191,28 @@ function Office({ profile, visible }: OfficeProps): React.JSX.Element {
       : selectedAgent?.status === "error"
         ? "#ef4444"
         : "#f59e0b";
+
+
+  const handleAgentAction = useCallback(async (action: ReturnType<typeof buildOfficeAgentActions>[number]) => {
+    if (!selectedAgent || action.disabled) return;
+    if (action.kind === "chat") {
+      onSelectProfile?.(selectedAgent.id);
+      setChatOpen(true);
+      return;
+    }
+    if (action.kind === "navigate") {
+      onSelectProfile?.(selectedAgent.id);
+      onNavigate?.(action.target as OfficeNavigationTarget);
+      return;
+    }
+    setActionBusy(action.id);
+    try {
+      await window.hermesAPI.restartGateway(selectedAgent.id);
+      await Promise.all([loadAgents(), loadOperatorStatus()]);
+    } finally {
+      setActionBusy(null);
+    }
+  }, [loadAgents, loadOperatorStatus, onNavigate, onSelectProfile, selectedAgent]);
 
   return (
     <div
@@ -469,6 +508,64 @@ function Office({ profile, visible }: OfficeProps): React.JSX.Element {
                   : t("office.gatewayStopped")}
               </dd>
             </dl>
+
+            {selectedStatusRows.length > 0 && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, opacity: 0.75 }}>Operational details</div>
+                {selectedStatusRows.map((row) => (
+                  <div
+                    key={row.label}
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      gap: 12,
+                      padding: "7px 9px",
+                      borderRadius: 8,
+                      background:
+                        row.severity === "error"
+                          ? "rgba(239,68,68,0.14)"
+                          : row.severity === "warning"
+                            ? "rgba(245,158,11,0.14)"
+                            : row.severity === "active"
+                              ? "rgba(34,197,94,0.14)"
+                              : "rgba(255,255,255,0.06)",
+                    }}
+                  >
+                    <span style={{ fontSize: 12, opacity: 0.65 }}>{row.label}</span>
+                    <span style={{ fontSize: 12, fontWeight: 700, textAlign: "right" }}>{row.value}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 8 }}>
+              {selectedActions.map((action) => (
+                <button
+                  key={action.id}
+                  type="button"
+                  disabled={Boolean(action.disabled) || actionBusy === action.id}
+                  onClick={() => void handleAgentAction(action)}
+                  title={action.disabled ? "Navigation is not available in this view yet" : action.label}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 8,
+                    padding: "9px 12px",
+                    borderRadius: 10,
+                    border: "1px solid rgba(255,255,255,0.14)",
+                    background: action.kind === "chat" ? "rgba(59,130,246,0.22)" : "rgba(255,255,255,0.07)",
+                    color: action.disabled ? "rgba(255,255,255,0.35)" : "rgba(255,255,255,0.9)",
+                    cursor: action.disabled ? "not-allowed" : "pointer",
+                    fontSize: 13,
+                    fontWeight: 650,
+                  }}
+                >
+                  {action.kind === "chat" ? <MessageCircle size={14} /> : action.kind === "restartGateway" ? <Power size={14} /> : null}
+                  {actionBusy === action.id ? "Working…" : action.label}
+                </button>
+              ))}
+            </div>
 
             <button
               type="button"
