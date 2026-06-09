@@ -12,6 +12,7 @@ import {
 } from "./hermes";
 import { getConnectionConfig } from "./config";
 import { HIDDEN_SUBPROCESS_OPTIONS } from "./process-options";
+import { sshReadCronJobsFile, sshRunCron } from "./ssh-remote";
 
 export interface CronJob {
   id: string;
@@ -64,6 +65,78 @@ function normalizeJob(job: Record<string, unknown>): CronJob | null {
     skills:
       (job.skills as string[]) || (job.skill ? [job.skill as string] : []),
     script: (job.script as string) || null,
+  };
+}
+
+function getSshConfigForCron() {
+  const conn = getConnectionConfig();
+  return conn.mode === "ssh" ? conn.ssh : undefined;
+}
+
+function normalizeCronListPayload(
+  payload: unknown,
+  includeDisabled: boolean,
+): CronJob[] {
+  const raw = Array.isArray(payload)
+    ? payload
+    : Array.isArray((payload as { jobs?: unknown[] } | null)?.jobs)
+      ? (payload as { jobs: unknown[] }).jobs
+      : [];
+  const jobs: CronJob[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const normalized = normalizeJob(item as Record<string, unknown>);
+    if (!normalized) continue;
+    if (!includeDisabled && !normalized.enabled) continue;
+    jobs.push(normalized);
+  }
+  return jobs;
+}
+
+async function listCronJobsOverSsh(
+  includeDisabled: boolean,
+  profile?: string,
+): Promise<CronJob[]> {
+  const ssh = getSshConfigForCron();
+  if (!ssh) return [];
+  const result = await sshRunCron<unknown>(ssh, ["list", "--json"], {
+    profile,
+    parseJson: true,
+    timeoutMs: 20000,
+  });
+  if (result.success) {
+    return normalizeCronListPayload(result.data, includeDisabled);
+  }
+
+  console.error(
+    "[CRON] ssh list failed:",
+    result.error || result.stdout || "unknown error",
+  );
+  try {
+    const filePayload = await sshReadCronJobsFile(ssh, profile);
+    return normalizeCronListPayload(filePayload, includeDisabled);
+  } catch (err) {
+    console.error("[CRON] ssh jobs file fallback failed:", err);
+    return [];
+  }
+}
+
+async function runCronCommandOverSsh(
+  args: string[],
+  profile?: string,
+): Promise<{ success: boolean; output: string; error?: string }> {
+  const ssh = getSshConfigForCron();
+  if (!ssh)
+    return {
+      success: false,
+      output: "",
+      error: "SSH connection is not configured",
+    };
+  const result = await sshRunCron(ssh, args, { profile, timeoutMs: 20000 });
+  return {
+    success: result.success,
+    output: result.stdout || "",
+    error: result.error,
   };
 }
 
@@ -137,6 +210,11 @@ export async function listCronJobs(
   includeDisabled = true,
   profile?: string,
 ): Promise<CronJob[]> {
+  const ssh = getSshConfigForCron();
+  if (ssh) {
+    return listCronJobsOverSsh(includeDisabled, profile);
+  }
+
   if (isRemoteMode()) {
     try {
       const qs = includeDisabled ? "?include_disabled=true" : "";
@@ -146,15 +224,7 @@ export async function listCronJobs(
         return [];
       }
       const body = (await res.json()) as { jobs?: Record<string, unknown>[] };
-      const raw = body.jobs || [];
-      const jobs: CronJob[] = [];
-      for (const job of raw) {
-        const normalized = normalizeJob(job);
-        if (!normalized) continue;
-        if (!includeDisabled && !normalized.enabled) continue;
-        jobs.push(normalized);
-      }
-      return jobs;
+      return normalizeCronListPayload(body, includeDisabled);
     } catch (err) {
       console.error("[CRON] remote list error:", err);
       return [];
@@ -228,6 +298,15 @@ export async function createCronJob(
   deliver?: string,
   profile?: string,
 ): Promise<{ success: boolean; error?: string }> {
+  if (getSshConfigForCron()) {
+    const args = ["create", schedule];
+    if (prompt) args.push(prompt);
+    if (name) args.push("--name", name);
+    if (deliver) args.push("--deliver", deliver);
+    const result = await runCronCommandOverSsh(args, profile);
+    return { success: result.success, error: result.error };
+  }
+
   if (isRemoteMode()) {
     try {
       const res = await remoteFetch("/api/jobs", {
@@ -263,6 +342,10 @@ export async function removeCronJob(
   profile?: string,
 ): Promise<{ success: boolean; error?: string }> {
   if (!jobId) return { success: false, error: "Missing job ID" };
+  if (getSshConfigForCron()) {
+    const result = await runCronCommandOverSsh(["remove", jobId], profile);
+    return { success: result.success, error: result.error };
+  }
   if (isRemoteMode()) {
     try {
       const res = await remoteFetch(`/api/jobs/${encodeURIComponent(jobId)}`, {
@@ -303,6 +386,10 @@ export async function pauseCronJob(
   profile?: string,
 ): Promise<{ success: boolean; error?: string }> {
   if (!jobId) return { success: false, error: "Missing job ID" };
+  if (getSshConfigForCron()) {
+    const result = await runCronCommandOverSsh(["pause", jobId], profile);
+    return { success: result.success, error: result.error };
+  }
   if (isRemoteMode()) return remoteJobAction(jobId, "pause");
   const result = await runCronCommand(["pause", jobId], profile);
   return { success: result.success, error: result.error };
@@ -313,6 +400,10 @@ export async function resumeCronJob(
   profile?: string,
 ): Promise<{ success: boolean; error?: string }> {
   if (!jobId) return { success: false, error: "Missing job ID" };
+  if (getSshConfigForCron()) {
+    const result = await runCronCommandOverSsh(["resume", jobId], profile);
+    return { success: result.success, error: result.error };
+  }
   if (isRemoteMode()) return remoteJobAction(jobId, "resume");
   const result = await runCronCommand(["resume", jobId], profile);
   return { success: result.success, error: result.error };
@@ -323,6 +414,10 @@ export async function triggerCronJob(
   profile?: string,
 ): Promise<{ success: boolean; error?: string }> {
   if (!jobId) return { success: false, error: "Missing job ID" };
+  if (getSshConfigForCron()) {
+    const result = await runCronCommandOverSsh(["run", jobId], profile);
+    return { success: result.success, error: result.error };
+  }
   if (isRemoteMode()) return remoteJobAction(jobId, "run");
   const result = await runCronCommand(["run", jobId], profile);
   return { success: result.success, error: result.error };

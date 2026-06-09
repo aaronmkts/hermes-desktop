@@ -1843,6 +1843,71 @@ export async function sshGetHermesVersion(
   }
 }
 
+// Run a Hermes Cron CLI subcommand over SSH and return a structured result.
+export interface SshCronResult<T = unknown> {
+  success: boolean;
+  data?: T;
+  error?: string;
+  stdout?: string;
+}
+
+export async function sshRunCron<T = unknown>(
+  config: SshConfig,
+  args: string[],
+  opts: { profile?: string; parseJson?: boolean; timeoutMs?: number } = {},
+): Promise<SshCronResult<T>> {
+  const cliArgs: string[] = [];
+  if (opts.profile && opts.profile !== "default") {
+    cliArgs.push("-p", opts.profile);
+  }
+  cliArgs.push("cron", ...args);
+  const cmd = buildRemoteHermesCmd(cliArgs);
+  try {
+    const stdout = await sshExec(
+      config,
+      cmd,
+      undefined,
+      opts.timeoutMs ?? 20000,
+    );
+    if (opts.parseJson) {
+      try {
+        return { success: true, data: JSON.parse(stdout) as T, stdout };
+      } catch (err) {
+        return {
+          success: false,
+          error: `Failed to parse JSON from remote 'hermes cron': ${(err as Error).message}`,
+          stdout,
+        };
+      }
+    }
+    return { success: true, stdout };
+  } catch (err) {
+    return {
+      success: false,
+      error: (err as Error).message || "Remote cron command failed",
+    };
+  }
+}
+
+export async function sshReadCronJobsFile(
+  config: SshConfig,
+  profile?: string,
+): Promise<unknown> {
+  const script = `
+import json, os, sys
+payload = json.load(sys.stdin)
+profile = payload.get("profile")
+path = os.path.expanduser(f"~/.hermes/profiles/{profile}/cron/jobs.json" if profile and profile != "default" else "~/.hermes/cron/jobs.json")
+try:
+    with open(path, "r", encoding="utf-8") as f:
+        print(json.dumps(json.load(f)))
+except FileNotFoundError:
+    print(json.dumps({"jobs": []}))
+`;
+  const out = await sshPython(config, script, pythonJsonInput({ profile }));
+  return JSON.parse(out.trim() || '{"jobs": []}');
+}
+
 // Run a Hermes Kanban CLI subcommand over SSH and return a structured result.
 export interface SshKanbanResult<T = unknown> {
   success: boolean;
