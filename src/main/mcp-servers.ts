@@ -1,10 +1,10 @@
 import { execFile } from "child_process";
 import { existsSync, readFileSync } from "fs";
-import { profilePaths, safeWriteFile } from "./utils";
+import { normalizeProfileName, profilePaths, safeWriteFile } from "./utils";
 import { getApiUrl, getRemoteAuthHeader, isRemoteMode } from "./hermes";
 import { getApiServerKey, getConnectionConfig, type SshConnectionConfig } from "./config";
 import { getEnhancedPath, HERMES_PYTHON, hermesCliArgs } from "./installer";
-import { sshExec } from "./ssh-remote";
+import { normalizeSshProfileName, sshExec } from "./ssh-remote";
 
 export type McpTransport = "http" | "stdio" | "unknown";
 
@@ -79,6 +79,7 @@ async function sshReadHermesConfig(
   ssh: SshConnectionConfig,
   profile?: string,
 ): Promise<string> {
+  const normalizedProfile = normalizeSshProfileName(profile);
   const script = `
 import json, pathlib, sys
 payload = json.load(sys.stdin)
@@ -95,7 +96,7 @@ except FileNotFoundError:
   return sshExec(
     ssh,
     `python3 -c ${shellQuote(script)}`,
-    JSON.stringify({ profile }),
+    JSON.stringify({ profile: normalizedProfile }),
   );
 }
 
@@ -104,6 +105,7 @@ async function sshWriteHermesConfig(
   content: string,
   profile?: string,
 ): Promise<void> {
+  const normalizedProfile = normalizeSshProfileName(profile);
   const script = `
 import json, pathlib, sys
 payload = json.load(sys.stdin)
@@ -119,7 +121,7 @@ path.write_text(content if content.endswith("\\n") else content + "\\n")
   await sshExec(
     ssh,
     `python3 -c ${shellQuote(script)}`,
-    JSON.stringify({ profile, content }),
+    JSON.stringify({ profile: normalizedProfile, content }),
   );
 }
 
@@ -129,13 +131,14 @@ async function sshHermesMcpCli(
   profile?: string,
   timeoutMs = 120000,
 ): Promise<string> {
-  const profileArgs = profile && profile !== "default" ? ["--profile", profile] : [];
+  const normalizedProfile = normalizeSshProfileName(profile);
+  const profileArgs = normalizedProfile ? ["--profile", normalizedProfile] : [];
   const command = ["hermes", ...profileArgs, "mcp", ...args].map(shellQuote).join(" ");
   return sshExec(ssh, command, undefined, timeoutMs);
 }
 
 function configFilePath(profile?: string): string {
-  return profilePaths(profile).configFile;
+  return profilePaths(normalizeProfileName(profile)).configFile;
 }
 
 function readConfig(profile?: string): string {
@@ -158,10 +161,10 @@ function runHermesMcpCli(
       HERMES_PYTHON,
       hermesCliArgs(["mcp", ...args]),
       {
-        cwd: profilePaths(profile).home,
+        cwd: profilePaths(normalizeProfileName(profile)).home,
         env: {
           ...process.env,
-          HERMES_HOME: profilePaths(profile).home,
+          HERMES_HOME: profilePaths(normalizeProfileName(profile)).home,
           PATH: getEnhancedPath(),
         },
         timeout: 30000,

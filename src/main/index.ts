@@ -262,6 +262,8 @@ import {
   sshSetModelConfig,
   sshListSessions,
   sshGetSessionMessages,
+  sshDeleteSession,
+  sshDeleteSessions,
   sshSearchSessions,
   sshListProfiles,
   sshCreateProfile,
@@ -1335,10 +1337,15 @@ function setupIPC(): void {
   });
 
   ipcMain.handle("delete-session", (_event, sessionId: string) => {
+    const conn = getConnectionConfig();
+    if (conn.mode === "ssh" && conn.ssh) return sshDeleteSession(conn.ssh, sessionId);
     return deleteSession(sessionId);
   });
 
   ipcMain.handle("delete-sessions", (_event, sessionIds: string[]) => {
+    const conn = getConnectionConfig();
+    if (conn.mode === "ssh" && conn.ssh)
+      return sshDeleteSessions(conn.ssh, Array.isArray(sessionIds) ? sessionIds : []);
     return deleteSessions(Array.isArray(sessionIds) ? sessionIds : []);
   });
 

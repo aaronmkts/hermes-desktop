@@ -26,11 +26,25 @@ vi.mock("../src/main/hermes", () => ({
 }));
 
 vi.mock("../src/main/ssh-remote", () => ({
+  normalizeSshProfileName: (profile?: unknown) => {
+    if (profile === undefined || profile === "" || profile === "default") return undefined;
+    if (typeof profile !== "string" || !/^[a-z0-9_][a-z0-9_-]{0,63}$/.test(profile)) {
+      throw new Error("Profile names may contain lowercase letters, numbers, underscores, and hyphens, and cannot start with a hyphen.");
+    }
+    return profile;
+  },
   sshExec: (...args: unknown[]) => sshExecMock(...args),
 }));
 
 vi.mock("../src/main/utils", () => ({
-  profilePaths: () => ({ configFile: "config.yaml" }),
+  normalizeProfileName: (profile?: unknown) => {
+    if (profile === undefined || profile === "" || profile === "default") return undefined;
+    if (typeof profile !== "string" || !/^[a-z0-9_][a-z0-9_-]{0,63}$/.test(profile)) {
+      throw new Error("Profile names may contain lowercase letters, numbers, underscores, and hyphens, and cannot start with a hyphen.");
+    }
+    return profile;
+  },
+  profilePaths: () => ({ configFile: "config.yaml", home: "/tmp/hermes-test" }),
   safeWriteFile: vi.fn(),
 }));
 
@@ -85,6 +99,19 @@ describe("MCP management in SSH tunnel mode", () => {
     expect(writePayload.content).toContain("mcp_servers:");
     expect(writePayload.content).toContain("linear:");
     expect(writePayload.content).toContain("https://mcp.linear.app/mcp");
+  });
+
+  it("rejects invalid SSH MCP profile names before remote config or CLI commands", async () => {
+    const { listMcpServers, testMcpServer } = await import("../src/main/mcp-servers");
+
+    await expect(listMcpServers("../../../etc")).rejects.toThrow(
+      /Profile names may contain/,
+    );
+    await expect(testMcpServer("todoist", "work;touch /tmp/pwn")).resolves.toMatchObject({
+      success: false,
+      error: expect.stringContaining("Profile names may contain"),
+    });
+    expect(sshExecMock).not.toHaveBeenCalled();
   });
 
   it("tests MCP servers through remote Hermes CLI instead of HTTP management endpoints", async () => {

@@ -30,6 +30,7 @@ import { upsertBlockChild } from "./config";
 import {
   isValidNamedProfileName,
   isValidProfileName,
+  normalizeProfileName,
   PROFILE_NAME_ERROR,
 } from "./utils";
 
@@ -137,7 +138,38 @@ function normalizeRemotePath(remotePath: string): string {
   return remotePath.replace(/^~\//, "$HOME/");
 }
 
+/**
+ * Normalize renderer-supplied SSH profile names before they are interpolated
+ * into remote filesystem paths or passed to remote Hermes CLI commands.
+ * undefined, empty string, and "default" all mean the default profile; named
+ * profiles must match the same safe rules as local profiles.
+ */
+export function normalizeSshProfileName(profile?: unknown): string | undefined {
+  return normalizeProfileName(profile);
+}
+
+function remoteHermesHome(profile?: unknown): string {
+  const normalized = normalizeSshProfileName(profile);
+  return normalized ? `$HOME/.hermes/profiles/${normalized}` : "$HOME/.hermes";
+}
+
+function remoteHermesHomeTilde(profile?: unknown): string {
+  const normalized = normalizeSshProfileName(profile);
+  return normalized ? `~/.hermes/profiles/${normalized}` : "~/.hermes";
+}
+
+function pushProfileArg(args: string[], profile?: unknown, flag = "-p"): void {
+  const normalized = normalizeSshProfileName(profile);
+  if (normalized) args.push(flag, normalized);
+}
+
 function pythonJsonInput(payload: unknown): string {
+  if (payload && typeof payload === "object" && "profile" in payload) {
+    return JSON.stringify({
+      ...(payload as Record<string, unknown>),
+      profile: normalizeSshProfileName((payload as Record<string, unknown>).profile),
+    });
+  }
   return JSON.stringify(payload);
 }
 
@@ -177,6 +209,7 @@ export async function sshListInstalledSkills(
   config: SshConfig,
   profile?: string,
 ): Promise<InstalledSkill[]> {
+  const normalizedProfile = normalizeSshProfileName(profile);
   const script = `
 import os, json, sys
 payload = json.load(sys.stdin)
@@ -221,7 +254,7 @@ if os.path.isdir(skills_dir):
 print(json.dumps(skills))
 `;
   try {
-    const out = await sshPython(config, script, pythonJsonInput({ profile }));
+    const out = await sshPython(config, script, pythonJsonInput({ profile: normalizedProfile }));
     const parsed = JSON.parse(out.trim() || "[]") as Array<{
       name: string;
       category: string;
@@ -249,9 +282,10 @@ export async function sshInstallSkill(
   identifier: string,
   profile?: string,
 ): Promise<{ success: boolean; error?: string }> {
+  const normalizedProfile = normalizeSshProfileName(profile);
   try {
     const args: string[] = [];
-    if (profile && profile !== "default") args.push("-p", profile);
+    pushProfileArg(args, normalizedProfile);
     args.push("skills", "install", identifier, "--yes");
     const stdout = await sshExec(
       config,
@@ -270,9 +304,10 @@ export async function sshUninstallSkill(
   name: string,
   profile?: string,
 ): Promise<{ success: boolean; error?: string }> {
+  const normalizedProfile = normalizeSshProfileName(profile);
   try {
     const args: string[] = [];
-    if (profile && profile !== "default") args.push("-p", profile);
+    pushProfileArg(args, normalizedProfile);
     args.push("skills", "uninstall", name, "--yes");
     const stdout = await sshExec(config, buildRemoteHermesCmd(args, " 2>&1"));
     const result = classifySkillCliOutput(stdout ?? "");
@@ -286,7 +321,7 @@ export async function sshUninstallSkill(
       `python3 -c '
 import os, sys
 name = ${shellQuote(name)}
-profile = ${shellQuote(profile || "")}
+profile = ${shellQuote(normalizedProfile || "")}
 home = os.path.expanduser("~")
 skills_dir = os.path.join(home, ".hermes", "profiles", profile, "skills") if profile and profile != "default" else os.path.join(home, ".hermes", "skills")
 if not os.path.isdir(skills_dir):
@@ -385,17 +420,11 @@ function serializeEntries(
 }
 
 function remoteMemoryPath(profile?: string): string {
-  if (profile && profile !== "default") {
-    return `~/.hermes/profiles/${profile}/memories/MEMORY.md`;
-  }
-  return "~/.hermes/memories/MEMORY.md";
+  return `${remoteHermesHomeTilde(profile)}/memories/MEMORY.md`;
 }
 
 function remoteUserPath(profile?: string): string {
-  if (profile && profile !== "default") {
-    return `~/.hermes/profiles/${profile}/memories/USER.md`;
-  }
-  return "~/.hermes/memories/USER.md";
+  return `${remoteHermesHomeTilde(profile)}/memories/USER.md`;
 }
 
 async function sshGetSessionStats(
@@ -541,9 +570,7 @@ You strive to be helpful while being safe and responsible. You respect the user'
 `;
 
 function remoteSoulPath(profile?: string): string {
-  if (profile && profile !== "default")
-    return `~/.hermes/profiles/${profile}/SOUL.md`;
-  return "~/.hermes/SOUL.md";
+  return `${remoteHermesHomeTilde(profile)}/SOUL.md`;
 }
 
 export async function sshReadSoul(
@@ -558,6 +585,7 @@ export async function sshWriteSoul(
   content: string,
   profile?: string,
 ): Promise<boolean> {
+  normalizeSshProfileName(profile);
   try {
     await sshWriteFile(config, remoteSoulPath(profile), content);
     return true;
@@ -633,9 +661,7 @@ function localizeToolDefs(
 }
 
 function remoteConfigPath(profile?: string): string {
-  if (profile && profile !== "default")
-    return `$HOME/.hermes/profiles/${profile}/config.yaml`;
-  return `$HOME/.hermes/config.yaml`;
+  return `${remoteHermesHome(profile)}/config.yaml`;
 }
 
 export async function sshGetToolsets(
@@ -779,9 +805,7 @@ async function sshSetPlatformToolsetEnabled(
 // ── Env / Config (Providers) ─────────────────────────────────────────────────
 
 function remoteEnvPath(profile?: string): string {
-  if (profile && profile !== "default")
-    return `~/.hermes/profiles/${profile}/.env`;
-  return "~/.hermes/.env";
+  return `${remoteHermesHomeTilde(profile)}/.env`;
 }
 
 export const SSH_ENV_MASK = "••••••••";
@@ -1117,8 +1141,7 @@ export async function sshSetConfigValue(
 }
 
 export function sshGetHermesHome(_config: SshConfig, profile?: string): string {
-  if (profile && profile !== "default") return `~/.hermes/profiles/${profile}`;
-  return "~/.hermes";
+  return remoteHermesHomeTilde(profile);
 }
 
 type SshCredentialEntry = {
@@ -1128,9 +1151,7 @@ type SshCredentialEntry = {
 };
 
 function sshAuthPath(profile?: string): string {
-  if (profile && profile !== "default")
-    return `$HOME/.hermes/profiles/${profile}/auth.json`;
-  return "$HOME/.hermes/auth.json";
+  return `${remoteHermesHome(profile)}/auth.json`;
 }
 
 function authStoreHasProviderCredentials(
@@ -1321,6 +1342,7 @@ export async function sshListSessions(
   offset = 0,
   profile?: string,
 ): Promise<SessionSummary[]> {
+  const normalizedProfile = normalizeSshProfileName(profile);
   const script = `
 import sqlite3, json, os, sys
 payload = json.load(sys.stdin)
@@ -1352,7 +1374,7 @@ conn.close()
     const out = await sshPython(
       config,
       script,
-      pythonJsonInput({ profile, limit, offset }),
+      pythonJsonInput({ profile: normalizedProfile, limit, offset }),
     );
     return JSON.parse(out.trim() || "[]");
   } catch {
@@ -1365,6 +1387,7 @@ export async function sshGetSessionMessages(
   sessionId: string,
   profile?: string,
 ): Promise<import("./sessions").HistoryItem[]> {
+  const normalizedProfile = normalizeSshProfileName(profile);
   // Mirror the local getSessionMessages logic over SSH: widen the SELECT to
   // include tool_calls / tool_name / tool_call_id / reasoning columns, then
   // expand each row into one or more HistoryItem entries. Kept inline in
@@ -1488,12 +1511,74 @@ conn.close()
     const out = await sshPython(
       config,
       script,
-      pythonJsonInput({ profile, sessionId }),
+      pythonJsonInput({ profile: normalizedProfile, sessionId }),
     );
     return JSON.parse(out.trim() || "[]");
   } catch {
     return [];
   }
+}
+
+
+export interface SshDeleteSessionsResult {
+  requested: number;
+  deleted: number;
+}
+
+export async function sshDeleteSessions(
+  config: SshConfig,
+  sessionIds: string[],
+  profile?: string,
+): Promise<SshDeleteSessionsResult> {
+  const normalizedProfile = normalizeSshProfileName(profile);
+  const ids = Array.from(
+    new Set(
+      (Array.isArray(sessionIds) ? sessionIds : [])
+        .filter((id): id is string => typeof id === "string")
+        .map((id) => id.trim())
+        .filter(Boolean),
+    ),
+  );
+  if (ids.length === 0) return { requested: 0, deleted: 0 };
+
+  const script = `
+import sqlite3, json, os, sys
+payload = json.load(sys.stdin)
+profile = payload.get("profile")
+ids = payload.get("sessionIds") or []
+db = os.path.expanduser(f"~/.hermes/profiles/{profile}/state.db" if profile and profile != "default" else "~/.hermes/state.db")
+if not os.path.exists(db):
+    print(json.dumps({"requested": len(ids), "deleted": 0}))
+    sys.exit(0)
+conn = sqlite3.connect(db)
+try:
+    deleted = 0
+    with conn:
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+        for session_id in ids:
+            if "prompt_image_attachments" in tables:
+                conn.execute("DELETE FROM prompt_image_attachments WHERE session_id = ?", (session_id,))
+            conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
+            cur = conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+            deleted += cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
+    print(json.dumps({"requested": len(ids), "deleted": deleted}))
+finally:
+    conn.close()
+`;
+  const out = await sshPython(
+    config,
+    script,
+    pythonJsonInput({ profile: normalizedProfile, sessionIds: ids }),
+  );
+  return JSON.parse(out.trim() || `{"requested":${ids.length},"deleted":0}`);
+}
+
+export async function sshDeleteSession(
+  config: SshConfig,
+  sessionId: string,
+  profile?: string,
+): Promise<void> {
+  await sshDeleteSessions(config, [sessionId], profile);
 }
 
 export async function sshSearchSessions(
@@ -1502,6 +1587,7 @@ export async function sshSearchSessions(
   limit = 20,
   profile?: string,
 ): Promise<SearchResult[]> {
+  const normalizedProfile = normalizeSshProfileName(profile);
   const script = `
 import sqlite3, json, os, sys
 payload = json.load(sys.stdin)
@@ -1529,7 +1615,7 @@ conn.close()
     const out = await sshPython(
       config,
       script,
-      pythonJsonInput({ profile, query, limit }),
+      pythonJsonInput({ profile: normalizedProfile, query, limit }),
     );
     return JSON.parse(out.trim() || "[]");
   } catch {
@@ -1916,9 +2002,7 @@ export async function sshRunCron<T = unknown>(
   opts: { profile?: string; parseJson?: boolean; timeoutMs?: number } = {},
 ): Promise<SshCronResult<T>> {
   const cliArgs: string[] = [];
-  if (opts.profile && opts.profile !== "default") {
-    cliArgs.push("-p", opts.profile);
-  }
+  pushProfileArg(cliArgs, opts.profile);
   cliArgs.push("cron", ...args);
   const cmd = buildRemoteHermesCmd(cliArgs);
   try {
@@ -1981,9 +2065,7 @@ export async function sshRunKanban<T = unknown>(
   opts: { profile?: string; parseJson?: boolean; timeoutMs?: number } = {},
 ): Promise<SshKanbanResult<T>> {
   const cliArgs: string[] = [];
-  if (opts.profile && opts.profile !== "default") {
-    cliArgs.push("-p", opts.profile);
-  }
+  pushProfileArg(cliArgs, opts.profile);
   cliArgs.push("kanban", ...args);
   const cmd = buildRemoteHermesCmd(cliArgs);
   try {
