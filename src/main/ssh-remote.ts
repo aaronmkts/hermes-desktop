@@ -21,10 +21,12 @@ import type { CachedSession } from "./session-cache";
 import type { ToolsetInfo } from "./tools";
 import { DEFAULT_MESSAGING_PLATFORM_TOOLSETS } from "../shared/messaging-platforms";
 import type { SavedModel } from "./models";
-import type { MemoryProviderInfo } from "./installer";
+import { expectedEnvKeyForModel, type MemoryProviderInfo } from "./installer";
 import { t } from "../shared/i18n";
 import { getAppLocale } from "./locale";
 import { HIDDEN_SUBPROCESS_OPTIONS } from "./process-options";
+import { canonicalProviderBaseUrl } from "./provider-registry";
+import { upsertBlockChild } from "./config";
 
 // ── SSH exec core ────────────────────────────────────────────────────────────
 
@@ -1136,6 +1138,76 @@ export function sshGetHermesHome(_config: SshConfig, profile?: string): string {
   return "~/.hermes";
 }
 
+type SshCredentialEntry = {
+  access_token?: string;
+  refresh_token?: string;
+  api_key?: string;
+};
+
+function sshAuthPath(profile?: string): string {
+  if (profile && profile !== "default")
+    return `$HOME/.hermes/profiles/${profile}/auth.json`;
+  return "$HOME/.hermes/auth.json";
+}
+
+function authStoreHasProviderCredentials(
+  store: unknown,
+  provider: string,
+): boolean {
+  if (!store || typeof store !== "object") return false;
+  const cleanProvider = provider.trim();
+  if (!cleanProvider) return false;
+  const root = store as {
+    providers?: Record<string, SshCredentialEntry>;
+    credential_pool?: Record<string, SshCredentialEntry[]>;
+  };
+
+  const providerEntry = root.providers?.[cleanProvider];
+  if (
+    providerEntry &&
+    (String(providerEntry.access_token || "").trim() ||
+      String(providerEntry.refresh_token || "").trim() ||
+      String(providerEntry.api_key || "").trim())
+  ) {
+    return true;
+  }
+
+  const entries = root.credential_pool?.[cleanProvider];
+  return Array.isArray(entries)
+    ? entries.some(
+        (entry) =>
+          !!(
+            entry &&
+            (String(entry.api_key || "").trim() ||
+              String(entry.access_token || "").trim() ||
+              String(entry.refresh_token || "").trim())
+          ),
+      )
+    : false;
+}
+
+export async function sshHasOAuthCredentials(
+  config: SshConfig,
+  provider: string,
+  profile?: string,
+): Promise<boolean> {
+  const paths = [sshAuthPath(profile)];
+  if (profile && profile !== "default") paths.push(sshAuthPath());
+
+  for (const path of paths) {
+    const raw = await sshReadFile(config, path);
+    if (!raw.trim()) continue;
+    try {
+      if (authStoreHasProviderCredentials(JSON.parse(raw), provider))
+        return true;
+    } catch {
+      // Ignore malformed auth stores; readiness remains fail-open only if the
+      // caller catches a broader SSH/read failure.
+    }
+  }
+  return false;
+}
+
 export async function sshGetModelConfig(
   config: SshConfig,
   profile?: string,
@@ -1153,6 +1225,63 @@ export async function sshGetModelConfig(
   };
 }
 
+async function sshPickAutoApiKeyForCustomProvider(
+  config: SshConfig,
+  provider: string,
+  baseUrl: string,
+  profile?: string,
+): Promise<string | null> {
+  if (provider !== "custom" || !baseUrl) return null;
+  const envKey = expectedEnvKeyForModel(provider, baseUrl);
+  if (!envKey) return null;
+  const env = await sshReadEnv(config, profile);
+  const raw = env[envKey];
+  if (!raw) return null;
+  const trimmed = raw.trim().replace(/^["']|["']$/g, "");
+  return trimmed || null;
+}
+
+function rewriteModelApiKey(content: string, apiKey: string | null): string {
+  const headerMatch = content.match(/^model:[^\S\r\n]*\r?\n/m);
+  if (!headerMatch) return content;
+  const start = headerMatch.index! + headerMatch[0].length;
+  const after = content.slice(start);
+  const nextTopMatch = after.match(/^\S/m);
+  const end = nextTopMatch ? start + nextTopMatch.index! : content.length;
+  const block = content.slice(start, end);
+  const apiKeyInBlock = /^[ \t]+api_key:\s*.*\r?\n?/m;
+  let newBlock = block;
+
+  if (apiKey) {
+    if (apiKeyInBlock.test(block)) {
+      newBlock = block.replace(/^([ \t]+api_key:\s*).*$/m, `$1"${apiKey}"`);
+    } else {
+      const eolMatch = block.match(/\r?\n/);
+      const eol = eolMatch ? eolMatch[0] : "\n";
+      const indentMatch = block.match(/^([ \t]+)\S/m);
+      const indent = indentMatch ? indentMatch[1] : "  ";
+      const apiKeyLine = `${indent}api_key: "${apiKey}"${eol}`;
+      const afterBaseUrl = block.replace(
+        /^([ \t]+base_url:\s*"[^"]*"\s*\r?\n)/m,
+        `$1${apiKeyLine}`,
+      );
+      newBlock =
+        afterBaseUrl !== block
+          ? afterBaseUrl
+          : block.replace(
+              /^([ \t]+provider:\s*"[^"]*"\s*\r?\n)/m,
+              `$1${apiKeyLine}`,
+            );
+      if (newBlock === block) newBlock = `${apiKeyLine}${block}`;
+    }
+  } else if (apiKeyInBlock.test(block)) {
+    newBlock = block.replace(apiKeyInBlock, "");
+  }
+
+  if (newBlock === block) return content;
+  return content.slice(0, start) + newBlock + content.slice(end);
+}
+
 export async function sshSetModelConfig(
   config: SshConfig,
   provider: string,
@@ -1160,15 +1289,33 @@ export async function sshSetModelConfig(
   baseUrl: string,
   profile?: string,
 ): Promise<void> {
-  await sshSetConfigValue(config, "model.provider", provider, profile);
-  await sshSetConfigValue(config, "model.default", model, profile);
-  if (baseUrl) {
-    await sshSetConfigValue(config, "model.base_url", baseUrl, profile);
-  }
   const configPath = remoteConfigPath(profile);
-  const content = await sshReadFile(config, configPath);
-  if (!content) return;
-  let updated = content.replace(/^(\s*streaming:\s*)(\S+)/m, "$1true");
+  const original = await sshReadFile(config, configPath);
+
+  // Rewrite the remote config.yaml as a document, not as independent dotted
+  // set operations. `sshSetConfigValue("model.default")` intentionally does
+  // not materialize missing nested blocks, which meant SSH Tunnel mode could
+  // silently fail to save a model when the remote config was new or lacked a
+  // model: block. The local helper already knows how to scope updates to the
+  // top-level model block while preserving unrelated sections, so use it here
+  // against the remote payload and then write the whole file back over SSH.
+  let updated = upsertBlockChild(original, "model", "provider", provider);
+  updated = upsertBlockChild(updated, "model", "default", model);
+
+  const effectiveBaseUrl = baseUrl || canonicalProviderBaseUrl(provider) || "";
+  if (effectiveBaseUrl) {
+    updated = upsertBlockChild(updated, "model", "base_url", effectiveBaseUrl);
+  }
+
+  const autoApiKey = await sshPickAutoApiKeyForCustomProvider(
+    config,
+    provider,
+    baseUrl,
+    profile,
+  );
+  updated = rewriteModelApiKey(updated, autoApiKey);
+
+  updated = updated.replace(/^(\s*streaming:\s*)(\S+)/m, "$1true");
   const lines = updated.split("\n");
   for (let i = 0; i < lines.length; i++) {
     if (
@@ -1180,9 +1327,9 @@ export async function sshSetModelConfig(
     }
   }
   updated = lines.join("\n");
-  if (updated !== content) await sshWriteFile(config, configPath, updated);
-}
 
+  if (updated !== original) await sshWriteFile(config, configPath, updated);
+}
 // ── Sessions ─────────────────────────────────────────────────────────────────
 
 export async function sshListSessions(
