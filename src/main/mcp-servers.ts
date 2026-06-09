@@ -2,8 +2,9 @@ import { execFile } from "child_process";
 import { existsSync, readFileSync } from "fs";
 import { profilePaths, safeWriteFile } from "./utils";
 import { getApiUrl, getRemoteAuthHeader, isRemoteMode } from "./hermes";
-import { getApiServerKey } from "./config";
+import { getApiServerKey, getConnectionConfig, type SshConnectionConfig } from "./config";
 import { getEnhancedPath, HERMES_PYTHON, hermesCliArgs } from "./installer";
+import { sshExec } from "./ssh-remote";
 
 export type McpTransport = "http" | "stdio" | "unknown";
 
@@ -64,6 +65,74 @@ interface HermesCliResult {
 
 const SERVER_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 const ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+function isSshMode(): SshConnectionConfig | null {
+  const conn = getConnectionConfig();
+  return conn.mode === "ssh" && conn.ssh ? conn.ssh : null;
+}
+
+function shellQuote(value: string): string {
+  return "'" + value.replace(/'/g, "'\"'\"'") + "'";
+}
+
+async function sshReadHermesConfig(
+  ssh: SshConnectionConfig,
+  profile?: string,
+): Promise<string> {
+  const script = `
+import json, pathlib, sys
+payload = json.load(sys.stdin)
+profile = payload.get("profile")
+if profile and profile != "default":
+    path = pathlib.Path.home() / ".hermes" / "profiles" / profile / "config.yaml"
+else:
+    path = pathlib.Path.home() / ".hermes" / "config.yaml"
+try:
+    sys.stdout.write(path.read_text())
+except FileNotFoundError:
+    sys.stdout.write("")
+`;
+  return sshExec(
+    ssh,
+    `python3 -c ${shellQuote(script)}`,
+    JSON.stringify({ profile }),
+  );
+}
+
+async function sshWriteHermesConfig(
+  ssh: SshConnectionConfig,
+  content: string,
+  profile?: string,
+): Promise<void> {
+  const script = `
+import json, pathlib, sys
+payload = json.load(sys.stdin)
+profile = payload.get("profile")
+content = payload.get("content", "")
+if profile and profile != "default":
+    path = pathlib.Path.home() / ".hermes" / "profiles" / profile / "config.yaml"
+else:
+    path = pathlib.Path.home() / ".hermes" / "config.yaml"
+path.parent.mkdir(parents=True, exist_ok=True)
+path.write_text(content if content.endswith("\\n") else content + "\\n")
+`;
+  await sshExec(
+    ssh,
+    `python3 -c ${shellQuote(script)}`,
+    JSON.stringify({ profile, content }),
+  );
+}
+
+async function sshHermesMcpCli(
+  ssh: SshConnectionConfig,
+  args: string[],
+  profile?: string,
+  timeoutMs = 120000,
+): Promise<string> {
+  const profileArgs = profile && profile !== "default" ? ["--profile", profile] : [];
+  const command = ["hermes", ...profileArgs, "mcp", ...args].map(shellQuote).join(" ");
+  return sshExec(ssh, command, undefined, timeoutMs);
+}
 
 function configFilePath(profile?: string): string {
   return profilePaths(profile).configFile;
@@ -638,6 +707,10 @@ function unsupportedMcpApiMessage(feature: "catalog" | "install" | "test"): stri
 }
 
 export async function listMcpServers(profile?: string): Promise<McpServerInfo[]> {
+  const ssh = isSshMode();
+  if (ssh) {
+    return parseMcpServersFromConfig(await sshReadHermesConfig(ssh, profile));
+  }
   if (isRemoteMode()) {
     const data = await mcpApi<{ servers?: Record<string, unknown>[] }>(
       "/api/mcp/servers",
@@ -657,6 +730,20 @@ export async function addMcpServer(
   if (!validated.ok) return { success: false, error: validated.error };
 
   try {
+    const ssh = isSshMode();
+    if (ssh) {
+      const content = await sshReadHermesConfig(ssh, profile);
+      const existing = parseMcpServersFromConfig(content);
+      if (existing.some((server) => server.name === validated.value.name)) {
+        return { success: false, error: `MCP server \"${validated.value.name}\" already exists.` };
+      }
+      await sshWriteHermesConfig(
+        ssh,
+        upsertMcpServerInConfig(content, validated.value),
+        profile,
+      );
+      return { success: true };
+    }
     if (isRemoteMode()) {
       await mcpApi(
         "/api/mcp/servers",
@@ -695,6 +782,12 @@ export async function removeMcpServer(
   profile?: string,
 ): Promise<McpOperationResult> {
   try {
+    const ssh = isSshMode();
+    if (ssh) {
+      const content = await sshReadHermesConfig(ssh, profile);
+      await sshWriteHermesConfig(ssh, removeMcpServerFromConfig(content, name), profile);
+      return { success: true };
+    }
     if (isRemoteMode()) {
       await mcpApi(`/api/mcp/servers/${encodeURIComponent(name)}`, {
         method: "DELETE",
@@ -714,6 +807,16 @@ export async function setMcpServerEnabled(
   profile?: string,
 ): Promise<McpOperationResult> {
   try {
+    const ssh = isSshMode();
+    if (ssh) {
+      const content = await sshReadHermesConfig(ssh, profile);
+      await sshWriteHermesConfig(
+        ssh,
+        setMcpServerEnabledInConfig(content, name, enabled),
+        profile,
+      );
+      return { success: true };
+    }
     if (isRemoteMode()) {
       await mcpApi(
         `/api/mcp/servers/${encodeURIComponent(name)}/enabled`,
@@ -734,6 +837,14 @@ export async function testMcpServer(
   profile?: string,
 ): Promise<McpOperationResult> {
   try {
+    const ssh = isSshMode();
+    if (ssh) {
+      const stdout = await sshHermesMcpCli(ssh, ["test", name], profile);
+      return {
+        success: true,
+        tools: parseMcpTestTools(stdout),
+      };
+    }
     if (!isRemoteMode()) {
       const result = await runHermesMcpCli(["test", name], profile);
       return {
@@ -764,6 +875,14 @@ export async function listMcpCatalog(
   profile?: string,
 ): Promise<{ entries: McpCatalogEntry[]; diagnostics: unknown[]; error?: string }> {
   try {
+    const ssh = isSshMode();
+    if (ssh) {
+      const stdout = await sshHermesMcpCli(ssh, ["catalog"], profile);
+      return {
+        entries: parseCatalogOutput(stdout),
+        diagnostics: [],
+      };
+    }
     if (!isRemoteMode()) {
       const result = await runHermesMcpCli(["catalog"], profile);
       return {
@@ -824,6 +943,16 @@ export async function installMcpCatalogEntry(
   profile?: string,
 ): Promise<McpOperationResult> {
   try {
+    const ssh = isSshMode();
+    if (ssh) {
+      if (Object.keys(env || {}).length) {
+        // Avoid putting secret values on the remote process command line.
+        // The catalog install creates the server entry; users can fill required
+        // secrets through the env/API-key screen after install.
+      }
+      await sshHermesMcpCli(ssh, ["install", name], profile);
+      return { success: true };
+    }
     if (!isRemoteMode()) {
       await runHermesMcpCli(["install", name], profile);
       return { success: true };
