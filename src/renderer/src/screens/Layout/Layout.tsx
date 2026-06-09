@@ -167,10 +167,17 @@ function Layout({
   >(null);
   const [downloadPercent, setDownloadPercent] = useState(0);
   const [updateError, setUpdateError] = useState<string | null>(null);
+  const [orionBuildStatus, setOrionBuildStatus] = useState<Awaited<
+    ReturnType<typeof window.hermesAPI.getOrionBuildStatus>
+  > | null>(null);
 
   useEffect(() => {
+    void window.hermesAPI.getOrionBuildStatus().then(setOrionBuildStatus).catch(() => {});
     const cleanupAvailable = window.hermesAPI.onUpdateAvailable((info) => {
       setUpdateVersion(info.version);
+      setOrionBuildStatus((current) =>
+        current ? { ...current, upstreamVersion: info.version } : current,
+      );
       setUpdateState("available");
       setUpdateError(null);
       setDownloadPercent(0);
@@ -185,6 +192,7 @@ function Layout({
       setUpdateError(null);
     });
     const cleanupError = window.hermesAPI.onUpdateError((message) => {
+      if (orionBuildStatus?.manualUpdates) return;
       setUpdateState("error");
       setUpdateError(message);
       setDownloadPercent(0);
@@ -195,9 +203,10 @@ function Layout({
       cleanupDownloaded();
       cleanupError();
     };
-  }, []);
+  }, [orionBuildStatus?.manualUpdates]);
 
   async function handleUpdate(): Promise<void> {
+    if (orionBuildStatus?.manualUpdates) return;
     if (updateState === "available" || updateState === "error") {
       setUpdateError(null);
       setDownloadPercent(0);
@@ -215,7 +224,9 @@ function Layout({
   }
 
   const updateButtonTitle =
-    updateError ??
+    orionBuildStatus?.manualUpdates
+      ? `${orionBuildStatus.label}: ${orionBuildStatus.detail}`
+      : updateError ??
     (updateState === "available"
       ? t("common.updateAvailable", { version: updateVersion })
       : updateState === "downloading"
@@ -330,28 +341,33 @@ function Layout({
           {updateState && (
             <button
               className={`sidebar-update-btn ${
-                updateState === "error" ? "error" : ""
+                updateState === "error" && !orionBuildStatus?.manualUpdates ? "error" : ""
               }`}
               onClick={handleUpdate}
-              disabled={updateState === "downloading"}
+              disabled={updateState === "downloading" || !!orionBuildStatus?.manualUpdates}
               title={updateButtonTitle}
               aria-label={updateButtonTitle}
             >
               <Download size={13} />
-              {updateState === "available" && (
+              {orionBuildStatus?.manualUpdates && (
+                <span>
+                  ORION build{orionBuildStatus.upstreamVersion ? `: upstream ${orionBuildStatus.upstreamVersion} available` : ": manual updates"}
+                </span>
+              )}
+              {!orionBuildStatus?.manualUpdates && updateState === "available" && (
                 <span>
                   {t("common.updateAvailable", { version: updateVersion })}
                 </span>
               )}
-              {updateState === "downloading" && (
+              {!orionBuildStatus?.manualUpdates && updateState === "downloading" && (
                 <span>
                   {t("common.downloading", { percent: downloadPercent })}
                 </span>
               )}
-              {updateState === "ready" && (
+              {!orionBuildStatus?.manualUpdates && updateState === "ready" && (
                 <span>{t("common.restartToUpdate")}</span>
               )}
-              {updateState === "error" && (
+              {!orionBuildStatus?.manualUpdates && updateState === "error" && (
                 <span>{t("common.updateFailed")}</span>
               )}
             </button>

@@ -61,6 +61,7 @@ import {
 } from "./mcp-servers";
 import { updaterLogger } from "./updater-log";
 import {
+  getOrionBuildStatus,
   getOrionUpdaterBlockedMessage,
   isOrionUpdaterGuardEnabled,
 } from "./updater-guard";
@@ -121,6 +122,7 @@ import {
   getModelConfig,
   setModelConfig,
   getCredentialPool,
+  getProviderCredentialStatus,
   setCredentialPool,
   addCredentialPoolEntry,
   getConnectionConfig,
@@ -280,6 +282,7 @@ import {
   sshGetHermesVersion,
   sshReadLogs,
   sshGetPlatformEnabled,
+  sshReadGatewayPlatformStates,
   sshSetPlatformEnabled,
   sshListCachedSessions,
   sshRunDoctor,
@@ -292,6 +295,10 @@ import {
   sshDiscoverMemoryProviders,
   sshInstallRegistryItem,
   sshListInstalledRegistry,
+  sshGetCredentialPool,
+  sshSetCredentialPool,
+  sshAddCredentialPoolEntry,
+  sshGetProviderCredentialStatus,
 } from "./ssh-remote";
 import { applyGpuPreferences, installGpuCrashGuard } from "./gpu-fallback";
 
@@ -1274,12 +1281,13 @@ function setupIPC(): void {
         return fetchRemoteMessagingPlatforms();
       }
       if (conn.mode === "ssh" && conn.ssh) {
-        const [envData, enabled, running, platformToolsets] = await Promise.all(
+        const [envData, enabled, running, platformToolsets, platformStates] = await Promise.all(
           [
             sshReadEnv(conn.ssh, profile),
             sshGetPlatformEnabled(conn.ssh, profile),
             sshGatewayStatus(conn.ssh),
             sshGetPlatformToolsets(conn.ssh, profile),
+            sshReadGatewayPlatformStates(conn.ssh, profile),
           ],
         );
         return buildDesktopMessagingPlatforms(
@@ -1287,6 +1295,7 @@ function setupIPC(): void {
           enabled,
           running,
           platformToolsets,
+          platformStates,
         );
       }
       const running = isGatewayRunning(profile);
@@ -1353,12 +1362,13 @@ function setupIPC(): void {
         return testRemoteMessagingPlatform(platform);
       }
       if (conn.mode === "ssh" && conn.ssh) {
-        const [envData, enabled, running, platformToolsets] = await Promise.all(
+        const [envData, enabled, running, platformToolsets, platformStates] = await Promise.all(
           [
             sshReadEnv(conn.ssh, profile),
             sshGetPlatformEnabled(conn.ssh, profile),
             sshGatewayStatus(conn.ssh),
             sshGetPlatformToolsets(conn.ssh, profile),
+            sshReadGatewayPlatformStates(conn.ssh, profile),
           ],
         );
         return testDesktopMessagingPlatform(
@@ -1368,6 +1378,7 @@ function setupIPC(): void {
             enabled,
             running,
             platformToolsets,
+            platformStates,
           ),
         );
       }
@@ -1611,17 +1622,25 @@ function setupIPC(): void {
   // credential pool helpers default to the currently active profile's
   // auth.json (see config.ts:authFilePath), so the renderer can pass an
   // explicit profile or rely on the active-profile fallback.
-  ipcMain.handle("get-credential-pool", (_event, profile?: string) =>
-    getCredentialPool(profile),
-  );
+  ipcMain.handle("get-credential-pool", (_event, profile?: string) => {
+    const conn = getConnectionConfig();
+    if (conn.mode === "ssh" && conn.ssh)
+      return sshGetCredentialPool(conn.ssh, profile);
+    return getCredentialPool(profile);
+  });
   ipcMain.handle(
     "set-credential-pool",
-    (
+    async (
       _event,
       provider: string,
       entries: Array<Record<string, unknown>>,
       profile?: string,
     ) => {
+      const conn = getConnectionConfig();
+      if (conn.mode === "ssh" && conn.ssh) {
+        await sshSetCredentialPool(conn.ssh, provider, entries, profile);
+        return true;
+      }
       setCredentialPool(provider, entries, profile);
       return true;
     },
@@ -1640,7 +1659,20 @@ function setupIPC(): void {
       label: string,
       profile?: string,
     ) => {
+      const conn = getConnectionConfig();
+      if (conn.mode === "ssh" && conn.ssh)
+        return sshAddCredentialPoolEntry(conn.ssh, provider, apiKey, label, profile);
       return addCredentialPoolEntry(provider, apiKey, label, profile);
+    },
+  );
+
+  ipcMain.handle(
+    "get-provider-credential-status",
+    (_event, provider: string, profile?: string) => {
+      const conn = getConnectionConfig();
+      if (conn.mode === "ssh" && conn.ssh)
+        return sshGetProviderCredentialStatus(conn.ssh, provider, profile);
+      return getProviderCredentialStatus(provider, profile);
     },
   );
 
@@ -2175,6 +2207,10 @@ function buildMenu(): void {
 function setupUpdater(): void {
   // IPC handlers must always be registered to avoid invoke errors
   ipcMain.handle("get-app-version", () => app.getVersion());
+  let latestUpstreamVersion: string | null = null;
+  ipcMain.handle("get-orion-build-status", () =>
+    getOrionBuildStatus(latestUpstreamVersion),
+  );
 
   // Portable Windows builds set PORTABLE_EXECUTABLE_DIR. They have no
   // install location for electron-updater to replace in place, so an
@@ -2212,6 +2248,7 @@ function setupUpdater(): void {
   }
 
   autoUpdater.on("update-available", (info) => {
+    latestUpstreamVersion = info.version;
     mainWindow?.webContents.send("update-available", {
       version: info.version,
       releaseNotes: info.releaseNotes,
@@ -2229,13 +2266,18 @@ function setupUpdater(): void {
   });
 
   autoUpdater.on("error", (err) => {
+    if (orionUpdaterGuardEnabled) {
+      updaterLogger.warn(`ORION updater guard suppressed upstream updater error: ${err.message}`);
+      return;
+    }
     mainWindow?.webContents.send("update-error", err.message);
   });
 
   ipcMain.handle("check-for-updates", async () => {
     try {
       const result = await autoUpdater.checkForUpdates();
-      return result?.updateInfo?.version || null;
+      latestUpstreamVersion = result?.updateInfo?.version || null;
+      return latestUpstreamVersion;
     } catch {
       return null;
     }
@@ -2245,7 +2287,6 @@ function setupUpdater(): void {
     if (orionUpdaterGuardEnabled) {
       const message = getOrionUpdaterBlockedMessage();
       updaterLogger.warn(message);
-      mainWindow?.webContents.send("update-error", message);
       return false;
     }
 
@@ -2263,7 +2304,6 @@ function setupUpdater(): void {
     if (orionUpdaterGuardEnabled) {
       const message = getOrionUpdaterBlockedMessage();
       updaterLogger.warn(message);
-      mainWindow?.webContents.send("update-error", message);
       return false;
     }
 

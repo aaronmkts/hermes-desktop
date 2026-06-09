@@ -27,6 +27,11 @@ import {
   sshGetSkillContent,
   sshInstallSkill,
   sshGetPlatformEnabled,
+  sshReadGatewayPlatformStates,
+  sshGetCredentialPool,
+  sshSetCredentialPool,
+  sshAddCredentialPoolEntry,
+  sshGetProviderCredentialStatus,
   sshInstallRegistryItem,
   sshListInstalledRegistry,
 } from "../src/main/ssh-remote";
@@ -349,6 +354,96 @@ describe("ssh tools and skills visibility", () => {
 
       expect(enabled.telegram).toBe(true);
       expect(enabled.whatsapp).toBe(false);
+    }),
+  );
+
+  it(
+    "reads remote gateway platform runtime state and desktop aliases",
+    withFakeSshRemote(async (remoteHome) => {
+      mkdirSync(join(remoteHome, ".hermes"), { recursive: true });
+      writeFileSync(
+        join(remoteHome, ".hermes", "gateway_state.json"),
+        JSON.stringify({
+          gateway_state: "running",
+          platforms: {
+            telegram: { state: "connected", updated_at: "2026-06-09T10:00:00Z" },
+            homeassistant: { state: "error", error_message: "token rejected" },
+            webhook: { state: "connected" },
+          },
+        }),
+      );
+
+      const states = await sshReadGatewayPlatformStates(sshConfig);
+
+      expect(states.telegram?.state).toBe("connected");
+      expect(states.home_assistant?.state).toBe("error");
+      expect(states.home_assistant?.error_message).toBe("token rejected");
+      expect(states.webhooks?.state).toBe("connected");
+    }),
+  );
+
+  it(
+    "ignores remote gateway platform state when gateway_state is not running",
+    withFakeSshRemote(async (remoteHome) => {
+      mkdirSync(join(remoteHome, ".hermes"), { recursive: true });
+      writeFileSync(
+        join(remoteHome, ".hermes", "gateway_state.json"),
+        JSON.stringify({
+          gateway_state: "stopped",
+          platforms: { telegram: { state: "connected" } },
+        }),
+      );
+
+      await expect(sshReadGatewayPlatformStates(sshConfig)).resolves.toEqual({});
+    }),
+  );
+
+  it(
+    "reads and writes remote credential pool entries over SSH",
+    withFakeSshRemote(async (remoteHome) => {
+      mkdirSync(join(remoteHome, ".hermes"), { recursive: true });
+      writeFileSync(
+        join(remoteHome, ".hermes", "auth.json"),
+        JSON.stringify({ credential_pool: { "openai-codex": [{ access_token: "tok" }] } }),
+      );
+
+      const before = await sshGetCredentialPool(sshConfig);
+      expect(before["openai-codex"]).toHaveLength(1);
+
+      const updated = await sshAddCredentialPoolEntry(
+        sshConfig,
+        "openai-codex",
+        "new-secret",
+        "manual",
+      );
+      expect(updated).toHaveLength(2);
+      await sshSetCredentialPool(sshConfig, "openai-codex", updated.slice(1));
+      const after = await sshGetCredentialPool(sshConfig);
+      expect(after["openai-codex"]).toHaveLength(1);
+      expect(after["openai-codex"][0].access_token).toBe("new-secret");
+    }),
+  );
+
+  it(
+    "reports remote OAuth and Honcho credential sources without returning secrets",
+    withFakeSshRemote(async (remoteHome) => {
+      mkdirSync(join(remoteHome, ".hermes"), { recursive: true });
+      writeFileSync(
+        join(remoteHome, ".hermes", "auth.json"),
+        JSON.stringify({ credential_pool: { "openai-codex": [{ access_token: "tok" }] } }),
+      );
+      writeFileSync(
+        join(remoteHome, ".hermes", "honcho.json"),
+        JSON.stringify({ apiKey: "honcho-secret" }),
+      );
+
+      const codex = await sshGetProviderCredentialStatus(sshConfig, "openai-codex");
+      expect(codex).toMatchObject({ configured: true, source: "auth.json" });
+      expect(JSON.stringify(codex)).not.toContain("tok");
+
+      const honcho = await sshGetProviderCredentialStatus(sshConfig, "honcho");
+      expect(honcho).toMatchObject({ configured: true, source: "honcho.json" });
+      expect(JSON.stringify(honcho)).not.toContain("honcho-secret");
     }),
   );
 
