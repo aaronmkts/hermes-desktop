@@ -280,6 +280,7 @@ import {
   sshGetHermesVersion,
   sshReadLogs,
   sshGetPlatformEnabled,
+  sshReadGatewayPlatformStates,
   sshSetPlatformEnabled,
   sshListCachedSessions,
   sshRunDoctor,
@@ -1274,12 +1275,13 @@ function setupIPC(): void {
         return fetchRemoteMessagingPlatforms();
       }
       if (conn.mode === "ssh" && conn.ssh) {
-        const [envData, enabled, running, platformToolsets] = await Promise.all(
+        const [envData, enabled, running, platformToolsets, platformStates] = await Promise.all(
           [
             sshReadEnv(conn.ssh, profile),
             sshGetPlatformEnabled(conn.ssh, profile),
             sshGatewayStatus(conn.ssh),
             sshGetPlatformToolsets(conn.ssh, profile),
+            sshReadGatewayPlatformStates(conn.ssh, profile),
           ],
         );
         return buildDesktopMessagingPlatforms(
@@ -1287,6 +1289,7 @@ function setupIPC(): void {
           enabled,
           running,
           platformToolsets,
+          platformStates,
         );
       }
       const running = isGatewayRunning(profile);
@@ -1353,12 +1356,13 @@ function setupIPC(): void {
         return testRemoteMessagingPlatform(platform);
       }
       if (conn.mode === "ssh" && conn.ssh) {
-        const [envData, enabled, running, platformToolsets] = await Promise.all(
+        const [envData, enabled, running, platformToolsets, platformStates] = await Promise.all(
           [
             sshReadEnv(conn.ssh, profile),
             sshGetPlatformEnabled(conn.ssh, profile),
             sshGatewayStatus(conn.ssh),
             sshGetPlatformToolsets(conn.ssh, profile),
+            sshReadGatewayPlatformStates(conn.ssh, profile),
           ],
         );
         return testDesktopMessagingPlatform(
@@ -1368,6 +1372,7 @@ function setupIPC(): void {
             enabled,
             running,
             platformToolsets,
+            platformStates,
           ),
         );
       }

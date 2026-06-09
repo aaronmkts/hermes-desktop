@@ -20,6 +20,7 @@ import type { SessionSummary, SearchResult } from "./sessions";
 import type { CachedSession } from "./session-cache";
 import { TOOLSET_DEFS, type ToolsetInfo } from "./tools";
 import { DEFAULT_MESSAGING_PLATFORM_TOOLSETS } from "../shared/messaging-platforms";
+import type { MessagingPlatformRuntimeState } from "../shared/messaging-platforms";
 import type { SavedModel } from "./models";
 import type {
   RegistryKind,
@@ -810,6 +811,47 @@ async function sshSetPlatformToolsetEnabled(
     return true;
   } catch {
     return false;
+  }
+}
+
+
+function remoteGatewayStatePath(profile?: string): string {
+  return `${remoteHermesHomeTilde(profile)}/gateway_state.json`;
+}
+
+const REMOTE_PLATFORM_STATE_KEY: Record<string, string> = {
+  home_assistant: "homeassistant",
+  webhooks: "webhook",
+};
+
+interface RemoteGatewayStateFile {
+  gateway_state?: string | null;
+  pid?: number | null;
+  platforms?: Record<string, MessagingPlatformRuntimeState>;
+}
+
+export async function sshReadGatewayPlatformStates(
+  config: SshConfig,
+  profile?: string,
+): Promise<Record<string, MessagingPlatformRuntimeState>> {
+  const raw = await sshReadFile(config, remoteGatewayStatePath(profile));
+  if (!raw.trim()) return {};
+  try {
+    const parsed = JSON.parse(raw) as RemoteGatewayStateFile;
+    if (parsed.gateway_state && parsed.gateway_state !== "running") return {};
+    const platforms = parsed.platforms ?? {};
+    const result: Record<string, MessagingPlatformRuntimeState> = {};
+    for (const [platform, state] of Object.entries(platforms)) {
+      result[platform] = state;
+    }
+    for (const [desktopKey, stateKey] of Object.entries(REMOTE_PLATFORM_STATE_KEY)) {
+      if (platforms[stateKey] && !result[desktopKey]) {
+        result[desktopKey] = platforms[stateKey];
+      }
+    }
+    return result;
+  } catch {
+    return {};
   }
 }
 
