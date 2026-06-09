@@ -20,6 +20,15 @@ interface ProviderCredentialStatus {
   locationLabel: string;
 }
 
+interface OrionBuildStatus {
+  isOrionPatchedBuild: boolean;
+  manualUpdates: boolean;
+  label: string;
+  detail: string;
+  upstreamVersion?: string | null;
+}
+}
+
 interface CredentialPoolEntry {
   id?: string;
   label?: string;
@@ -863,6 +872,8 @@ const hermesAPI = {
   downloadUpdate: (): Promise<boolean> => ipcRenderer.invoke("download-update"),
   installUpdate: (): Promise<void> => ipcRenderer.invoke("install-update"),
   getAppVersion: (): Promise<string> => ipcRenderer.invoke("get-app-version"),
+  getOrionBuildStatus: (): Promise<OrionBuildStatus> =>
+    ipcRenderer.invoke("get-orion-build-status"),
 
   onUpdateAvailable: (
     callback: (info: { version: string; releaseNotes: string }) => void,

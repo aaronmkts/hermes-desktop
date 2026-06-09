@@ -91,6 +91,15 @@ interface ProviderCredentialStatus {
   locationLabel: string;
 }
 
+interface OrionBuildStatus {
+  isOrionPatchedBuild: boolean;
+  manualUpdates: boolean;
+  label: string;
+  detail: string;
+  upstreamVersion?: string | null;
+}
+}
+
 interface CredentialPoolEntry {
   id?: string;
   label?: string;
@@ -703,6 +712,7 @@ interface HermesAPI {
   downloadUpdate: () => Promise<boolean>;
   installUpdate: () => Promise<void>;
   getAppVersion: () => Promise<string>;
+  getOrionBuildStatus: () => Promise<OrionBuildStatus>;
   onUpdateAvailable: (
     callback: (info: { version: string; releaseNotes: string }) => void,
   ) => () => void;
