@@ -38,11 +38,11 @@ describe("buildOperatorCards", () => {
     const labels = buildOperatorCards(baseStatus).map((card) => card.label);
     expect(labels).toEqual(["ORION build", "Remote gateway", "Active work", "Provider auth", "Honcho memory", "Platform health", "Kanban tasks"]);
     const values = Object.fromEntries(buildOperatorCards(baseStatus).map((card) => [card.label, card.value]));
-    expect(values["Remote gateway"]).toBe("Running · 2/4 connected · 1 needs attention");
+    expect(values["Remote gateway"]).toBe("Running · 2/4 connected");
     expect(values["Active work"]).toBe("1 active · 1 waiting");
     expect(values["Provider auth"]).toBe("Codex signed in via env");
     expect(values["Honcho memory"]).toBe("Not detected");
-    expect(values["Platform health"]).toBe("2 connected · 1 needs attention · 4 configured");
+    expect(values["Platform health"]).toBe("Operational · 2 connected · optional platforms need attention");
     expect(values["Kanban tasks"]).toBe("1 running · 2 blocked · 3 done today");
   });
 

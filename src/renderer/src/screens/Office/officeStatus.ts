@@ -74,6 +74,19 @@ function formatConfigured(value: string | null | undefined): string {
   return value && value !== "missing" ? value : "unknown";
 }
 
+function platformHealthSummary(status: OfficeStatus): string {
+  const connected = status.gateway.connectedPlatforms;
+  const errors = status.gateway.errorPlatforms;
+  const configured = status.gateway.configuredPlatforms;
+  if (connected > 0) {
+    return errors > 0
+      ? `Operational · ${connected} connected · optional platforms need attention`
+      : `Operational · ${connected} connected`;
+  }
+  if (configured > 0 && errors > 0) return `${errors} platform${errors === 1 ? "" : "s"} need attention · 0 connected`;
+  return `${connected} connected · ${configured} configured`;
+}
+
 export function buildOperatorCards(status: OfficeStatus | null | undefined): OperatorCardSummary[] {
   if (!status) {
     return ["ORION build", "Remote gateway", "Active work", "Provider auth", "Honcho memory", "Platform health", "Kanban tasks"].map((label) => ({ label, value: "Loading…" }));
@@ -101,13 +114,13 @@ export function buildOperatorCards(status: OfficeStatus | null | undefined): Ope
     {
       label: "Remote gateway",
       value: status.gateway.running
-        ? `Running · ${status.gateway.connectedPlatforms}/${status.gateway.configuredPlatforms} connected${status.gateway.errorPlatforms ? ` · ${status.gateway.errorPlatforms} needs attention` : ""}`
+        ? `Running · ${status.gateway.connectedPlatforms}/${status.gateway.configuredPlatforms} connected`
         : "Stopped or unknown",
     },
     { label: "Active work", value: `${counts.active} active · ${counts.waiting} waiting` },
     { label: "Provider auth", value: status.providers.codexConfigured ? `Codex signed in via ${formatConfigured(status.providers.codexSource)}` : "Codex not detected" },
     { label: "Honcho memory", value: status.providers.honchoConfigured ? `Configured via ${formatConfigured(status.providers.honchoSource)}` : "Not detected" },
-    { label: "Platform health", value: `${status.gateway.connectedPlatforms} connected · ${status.gateway.errorPlatforms} needs attention · ${status.gateway.configuredPlatforms} configured` },
+    { label: "Platform health", value: platformHealthSummary(status) },
     { label: "Kanban tasks", value: `${counts.running} running · ${counts.blocked} blocked · ${counts.doneRecent} done today` },
   ];
 }

@@ -286,6 +286,98 @@ function whisperModelForBaseUrl(baseUrl: string): string {
   return "whisper-1";
 }
 
+export type TranscriptionRoute =
+  | { provider: "openai-compatible"; baseUrl: string; apiKey: string; model: string }
+  | { provider: "gemini"; apiKey: string; model: string };
+
+export function resolveTranscriptionRoute(input: {
+  baseUrl?: string | null;
+  env: Record<string, string | undefined>;
+}): TranscriptionRoute | null {
+  const env = input.env;
+  const voiceBaseUrl = (env.VOICE_TOOLS_OPENAI_BASE_URL || env.VOICE_TOOLS_BASE_URL || "").trim().replace(/\/+$/, "");
+  const voiceKey = (env.VOICE_TOOLS_OPENAI_KEY || env.VOICE_TOOLS_API_KEY || "").trim();
+  if (voiceBaseUrl && voiceKey) {
+    return { provider: "openai-compatible", baseUrl: voiceBaseUrl, apiKey: voiceKey, model: whisperModelForBaseUrl(voiceBaseUrl) };
+  }
+
+  const baseUrl = (input.baseUrl || "").trim().replace(/\/+$/, "");
+  const isCodexChatBackend = /chatgpt\.com\/backend-api\/codex/i.test(baseUrl);
+  if (baseUrl && !isCodexChatBackend) {
+    let apiKey = "";
+    for (const { pattern, envKey } of URL_KEY_MAP) {
+      if (pattern.test(baseUrl)) {
+        apiKey = (env[envKey] || "").trim();
+        break;
+      }
+    }
+    if (!apiKey) apiKey = (env.CUSTOM_API_KEY || env.OPENAI_API_KEY || "").trim();
+    if (apiKey) {
+      return { provider: "openai-compatible", baseUrl, apiKey, model: whisperModelForBaseUrl(baseUrl) };
+    }
+  }
+
+  const googleKey = (env.GOOGLE_API_KEY || env.GEMINI_API_KEY || "").trim();
+  if (googleKey) return { provider: "gemini", apiKey: googleKey, model: "gemini-2.5-flash" };
+  return null;
+}
+
+export function transcriptionErrorMessage(input: { baseUrl?: string | null; env: Record<string, string | undefined> }): string {
+  const baseUrl = (input.baseUrl || "").trim();
+  if (/chatgpt\.com\/backend-api\/codex/i.test(baseUrl)) {
+    return "Voice input needs either VOICE_TOOLS_OPENAI_KEY plus VOICE_TOOLS_OPENAI_BASE_URL, or GOOGLE_API_KEY/GEMINI_API_KEY for Gemini transcription. The Codex chat backend does not expose /audio/transcriptions.";
+  }
+  return "Voice input needs a transcription-capable provider: set VOICE_TOOLS_OPENAI_KEY plus VOICE_TOOLS_OPENAI_BASE_URL, or GOOGLE_API_KEY/GEMINI_API_KEY for Gemini transcription.";
+}
+
+async function transcribeWithOpenAiCompatible(route: Extract<TranscriptionRoute, { provider: "openai-compatible" }>, audio: Uint8Array, mimeType: string): Promise<string> {
+  const form = new FormData();
+  form.append(
+    "file",
+    new Blob([audio as BlobPart], { type: mimeType || "audio/webm" }),
+    "speech.webm",
+  );
+  form.append("model", route.model);
+  const res = await fetch(`${route.baseUrl}/audio/transcriptions`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${route.apiKey}` },
+    body: form,
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Transcription failed (${res.status}). ${body.slice(0, 200)}`.trim());
+  }
+  const data = (await res.json().catch(() => null)) as { text?: string } | null;
+  return (data?.text || "").trim();
+}
+
+async function transcribeWithGemini(route: Extract<TranscriptionRoute, { provider: "gemini" }>, audio: Uint8Array, mimeType: string): Promise<string> {
+  const audioBase64 = Buffer.from(audio).toString("base64");
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(route.model)}:generateContent?key=${encodeURIComponent(route.apiKey)}`;
+  const res = await fetch(endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      contents: [
+        {
+          role: "user",
+          parts: [
+            { text: "Transcribe this audio exactly. Return only the spoken words, with no commentary." },
+            { inline_data: { mime_type: mimeType || "audio/webm", data: audioBase64 } },
+          ],
+        },
+      ],
+      generationConfig: { temperature: 0 },
+    }),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Gemini transcription failed (${res.status}). ${body.slice(0, 200)}`.trim());
+  }
+  const data = (await res.json().catch(() => null)) as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> } | null;
+  return (data?.candidates?.[0]?.content?.parts ?? []).map((part) => part.text || "").join(" ").trim();
+}
+
 /**
  * Transcribe a recorded audio clip to text via the active profile's provider.
  *
@@ -305,48 +397,20 @@ export async function transcribeAudio(
   const resolved = resolveProfile(profile);
   const mc = getModelConfig(resolved);
   const baseUrl = (mc.baseUrl || "").replace(/\/+$/, "");
-  if (!baseUrl) {
-    throw new Error(
-      "Voice input needs an OpenAI-compatible base URL (e.g. Groq) on the active model. Set one in Models, or type your message.",
-    );
-  }
-
-  // Resolve the provider key the same way the chat path does: URL-specific key
-  // first, then the generic CUSTOM_API_KEY / OPENAI_API_KEY fallbacks.
   const env = readEnv(resolved);
-  let apiKey = "";
-  for (const { pattern, envKey } of URL_KEY_MAP) {
-    if (pattern.test(baseUrl)) {
-      apiKey = (env[envKey] || "").trim();
-      break;
+  const route = resolveTranscriptionRoute({ baseUrl, env });
+  if (!route) throw new Error(transcriptionErrorMessage({ baseUrl, env }));
+
+  try {
+    if (route.provider === "gemini") return await transcribeWithGemini(route, audio, mimeType);
+    return await transcribeWithOpenAiCompatible(route, audio, mimeType);
+  } catch (err) {
+    const message = (err as Error).message || "Transcription failed";
+    if (/fetch failed/i.test(message)) {
+      throw new Error(`Voice transcription network request failed for ${route.provider}. Check the transcription provider credentials/network configuration.`);
     }
+    throw err;
   }
-  if (!apiKey) apiKey = (env.CUSTOM_API_KEY || env.OPENAI_API_KEY || "").trim();
-
-  const form = new FormData();
-  form.append(
-    "file",
-    new Blob([audio as BlobPart], { type: mimeType || "audio/webm" }),
-    "speech.webm",
-  );
-  form.append("model", whisperModelForBaseUrl(baseUrl));
-
-  const headers: Record<string, string> = {};
-  if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
-
-  const res = await fetch(`${baseUrl}/audio/transcriptions`, {
-    method: "POST",
-    headers,
-    body: form,
-  });
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(
-      `Transcription failed (${res.status}). ${body.slice(0, 200)}`.trim(),
-    );
-  }
-  const data = (await res.json().catch(() => null)) as { text?: string } | null;
-  return (data?.text || "").trim();
 }
 
 interface ChatHandle {
