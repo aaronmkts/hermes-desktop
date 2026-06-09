@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { X, Send, Bot } from "lucide-react";
 import type { OfficeAgent } from "./office3d/core/types";
+import { getOneChatSendState } from "./oneChatSendState";
 
 interface OneChatModalProps {
   open: boolean;
@@ -102,10 +103,14 @@ export default function OneChatModal({
     ? (messages[selectedAgentId] ?? [])
     : [];
 
+  const sendState = getOneChatSendState({
+    input,
+    selectedAgent,
+    isLoading: selectedAgentId ? (loadingMap[selectedAgentId] ?? false) : false,
+  });
+
   const handleSend = async (): Promise<void> => {
-    if (!input.trim() || !selectedAgentId) return;
-    const target = agents.find((a) => a.id === selectedAgentId);
-    if (!target?.gatewayRunning) return;
+    if (!sendState.canSend || !selectedAgentId) return;
     const text = input.trim();
     setInput("");
 
@@ -340,9 +345,7 @@ export default function OneChatModal({
                     {selectedAgent.name}
                   </div>
                   <div className="text-xs text-white/40">
-                    {selectedAgent.gatewayRunning
-                      ? selectedAgent.status
-                      : "Offline — start gateway to chat"}
+                    {sendState.statusText ?? selectedAgent.status}
                   </div>
                 </div>
               </>
@@ -359,6 +362,19 @@ export default function OneChatModal({
             className="flex-1 overflow-y-auto flex flex-col gap-3"
             style={{ padding: "16px 20px" }}
           >
+            {sendState.warning && (
+              <div
+                className="text-sm rounded-lg"
+                style={{
+                  padding: "10px 12px",
+                  background: "rgba(245,158,11,0.12)",
+                  border: "1px solid rgba(245,158,11,0.35)",
+                  color: "rgba(255,255,255,0.82)",
+                }}
+              >
+                {sendState.warning}
+              </div>
+            )}
             {agentMessages.length === 0 && selectedAgent && (
               <div className="flex flex-col items-center justify-center h-full gap-3 text-white/30">
                 <Bot size={40} />
@@ -459,18 +475,8 @@ export default function OneChatModal({
                   void handleSend();
                 }
               }}
-              placeholder={
-                !selectedAgent
-                  ? "Select an agent..."
-                  : selectedAgent.gatewayRunning
-                    ? `Message ${selectedAgent.name}...`
-                    : "Gateway offline"
-              }
-              disabled={
-                !selectedAgent ||
-                !selectedAgent.gatewayRunning ||
-                (selectedAgentId ? loadingMap[selectedAgentId] : false)
-              }
+              placeholder={sendState.placeholder}
+              disabled={!sendState.canEdit}
               className="flex-1 text-sm rounded-lg outline-none text-white placeholder-white/30"
               style={{
                 padding: "10px 14px",
@@ -481,12 +487,7 @@ export default function OneChatModal({
             <button
               type="button"
               onClick={() => void handleSend()}
-              disabled={
-                !input.trim() ||
-                !selectedAgent ||
-                !selectedAgent.gatewayRunning ||
-                (selectedAgentId ? loadingMap[selectedAgentId] : false)
-              }
+              disabled={!sendState.canSend}
               className="flex items-center justify-center rounded-lg transition-colors disabled:opacity-30"
               style={{
                 width: 40,

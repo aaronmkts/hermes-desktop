@@ -1,15 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Crown, RefreshCw, Users, X } from "lucide-react";
+import { Crown, MessageCircle, Power, RefreshCw, Users, X } from "lucide-react";
 import { useI18n } from "../../components/useI18n";
 import oneChatIcon from "../../assets/images/one-chat.svg";
 import OneChatModal from "./OneChatModal";
 import Office3D from "./office3d/Office3D";
-import { profilesToOfficeAgents } from "./office3d/agents";
+import { buildOperatorCards, officeStatusToAgents } from "./officeStatus";
 import type { OfficeAgent } from "./office3d/core/types";
+import { buildOfficeAgentActions, buildOfficeAgentStatusRows, type OfficeNavigationTarget } from "./officeActions";
+import type { OfficeStatus } from "../../../../main/office-status";
 
 interface OfficeProps {
   profile?: string;
   visible?: boolean;
+  onNavigate?: (target: OfficeNavigationTarget) => void;
+  onSelectProfile?: (profile: string) => void;
 }
 
 // The CEO assignment is desktop-local UI state (one agent at a time), persisted
@@ -28,21 +32,15 @@ function readStoredCeo(): string | null {
  * The Office tab. Renders a native, in-renderer 3D office (no external dev
  * server / webview) where each Hermes profile appears as an interactive agent.
  */
-function Office({ profile, visible }: OfficeProps): React.JSX.Element {
+function Office({ profile, visible, onNavigate, onSelectProfile }: OfficeProps): React.JSX.Element {
   const { t } = useI18n();
   const [agents, setAgents] = useState<OfficeAgent[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [ceoId, setCeoId] = useState<string | null>(readStoredCeo);
   const [chatOpen, setChatOpen] = useState(false);
-  const [operatorStatus, setOperatorStatus] = useState<{
-    build?: Awaited<ReturnType<typeof window.hermesAPI.getOrionBuildStatus>>;
-    gatewayRunning?: boolean;
-    connectedPlatforms?: number;
-    errorPlatforms?: number;
-    codex?: Awaited<ReturnType<typeof window.hermesAPI.getProviderCredentialStatus>>;
-    honcho?: Awaited<ReturnType<typeof window.hermesAPI.getProviderCredentialStatus>>;
-  }>({});
+  const [officeStatus, setOfficeStatus] = useState<OfficeStatus | null>(null);
+  const [actionBusy, setActionBusy] = useState<string | null>(null);
 
   const setCeo = useCallback((id: string | null) => {
     setCeoId(id);
@@ -58,57 +56,26 @@ function Office({ profile, visible }: OfficeProps): React.JSX.Element {
   const loadedOnce = useRef(false);
 
 
-  const loadOperatorStatus = useCallback(async () => {
-    try {
-      const [build, gatewayRunning, platforms, codex, honcho] = await Promise.all([
-        window.hermesAPI.getOrionBuildStatus(),
-        window.hermesAPI.gatewayStatus(),
-        window.hermesAPI.getMessagingPlatforms(profile),
-        window.hermesAPI.getProviderCredentialStatus("openai-codex", profile),
-        window.hermesAPI.getProviderCredentialStatus("honcho", profile),
-      ]);
-      setOperatorStatus({
-        build,
-        gatewayRunning,
-        connectedPlatforms: platforms.platforms.filter((p) => p.state === "connected").length,
-        errorPlatforms: platforms.platforms.filter((p) => p.state === "error" || p.error_message).length,
-        codex,
-        honcho,
-      });
-    } catch {
-      // Office is an overview; individual management screens remain source of truth.
-    }
-  }, [profile]);
-
-  const loadAgents = useCallback(async () => {
+  const loadOfficeStatus = useCallback(async () => {
     setLoading(true);
     try {
-      const profiles = await window.hermesAPI.listProfiles();
-      setAgents(profilesToOfficeAgents(profiles));
+      const status = await window.hermesAPI.getOfficeStatus(profile);
+      setOfficeStatus(status);
+      setAgents(officeStatusToAgents(status));
     } catch {
+      setOfficeStatus(null);
       setAgents([]);
     } finally {
       setLoading(false);
       loadedOnce.current = true;
     }
-  }, []);
+  }, [profile]);
 
-  useEffect(() => {
-    if (visible && !loadedOnce.current) {
-      void loadAgents();
-      void loadOperatorStatus();
-    }
-  }, [visible, loadAgents, loadOperatorStatus]);
-
-  // Background poll: re-read profiles while the tab is visible so a gateway
-  // starting/stopping flips an agent's status (idle <-> working). The 3D
-  // controller reacts to that change by walking the agent to its desk or to
-  // the rest room. We update state only when something actually changed and
-  // never toggle `loading`, so this stays flicker-free.
-  const refreshAgentStatuses = useCallback(async () => {
+  const refreshOfficeStatus = useCallback(async () => {
     try {
-      const profiles = await window.hermesAPI.listProfiles();
-      const next = profilesToOfficeAgents(profiles);
+      const status = await window.hermesAPI.getOfficeStatus(profile);
+      const next = officeStatusToAgents(status);
+      setOfficeStatus(status);
       setAgents((prev) => {
         const prevById = new Map(prev.map((a) => [a.id, a]));
         const changed =
@@ -118,7 +85,9 @@ function Office({ profile, visible }: OfficeProps): React.JSX.Element {
             return (
               !before ||
               before.status !== a.status ||
-              before.gatewayRunning !== a.gatewayRunning
+              before.gatewayRunning !== a.gatewayRunning ||
+              before.stateReason !== a.stateReason ||
+              before.recentMessageCount !== a.recentMessageCount
             );
           });
         return changed ? next : prev;
@@ -126,16 +95,26 @@ function Office({ profile, visible }: OfficeProps): React.JSX.Element {
     } catch {
       // Transient IPC failures are ignored; the next tick retries.
     }
-  }, []);
+  }, [profile]);
 
+  useEffect(() => {
+    if (visible && !loadedOnce.current) {
+      void loadOfficeStatus();
+    }
+  }, [visible, loadOfficeStatus]);
+
+  // Background poll: re-read profiles while the tab is visible so a gateway
+  // starting/stopping flips an agent's status (idle <-> working). The 3D
+  // controller reacts to that change by walking the agent to its desk or to
+  // the rest room. We update state only when something actually changed and
+  // never toggle `loading`, so this stays flicker-free.
   useEffect(() => {
     if (!visible) return;
     const interval = window.setInterval(() => {
-      void refreshAgentStatuses();
-      void loadOperatorStatus();
+      void refreshOfficeStatus();
     }, 4000);
     return () => window.clearInterval(interval);
-  }, [visible, refreshAgentStatuses, loadOperatorStatus]);
+  }, [visible, refreshOfficeStatus]);
 
   // The initial fetch is driven solely by the visible-guard effect above
   // (gated on `!loadedOnce.current`). A second unconditional mount effect used
@@ -167,13 +146,54 @@ function Office({ profile, visible }: OfficeProps): React.JSX.Element {
 
   const selectedAgent =
     positionedAgents.find((a) => a.id === selectedId) ?? null;
+  const selectedActions = selectedAgent
+    ? buildOfficeAgentActions(selectedAgent, {
+        chat: true,
+        restartGateway: typeof window.hermesAPI.restartGateway === "function",
+        gateway: Boolean(onNavigate),
+        providers: Boolean(onNavigate),
+        kanban: Boolean(onNavigate),
+        sessions: Boolean(onNavigate),
+      })
+    : [];
+  const selectedStatusRows = selectedAgent
+    ? buildOfficeAgentStatusRows(selectedAgent)
+    : [];
   const selectedIsCeo = selectedAgent?.position === "ceo";
   const selectedStatusColor =
-    selectedAgent?.status === "working"
+    selectedAgent?.status === "active"
       ? "#22c55e"
-      : selectedAgent?.status === "error"
-        ? "#ef4444"
-        : "#f59e0b";
+      : selectedAgent?.status === "available"
+        ? "#38bdf8"
+        : selectedAgent?.status === "error"
+          ? "#ef4444"
+          : selectedAgent?.status === "waiting"
+            ? "#a855f7"
+            : selectedAgent?.status === "offline"
+              ? "#64748b"
+              : "#f59e0b";
+
+
+  const handleAgentAction = useCallback(async (action: ReturnType<typeof buildOfficeAgentActions>[number]) => {
+    if (!selectedAgent || action.disabled) return;
+    if (action.kind === "chat") {
+      onSelectProfile?.(selectedAgent.id);
+      setChatOpen(true);
+      return;
+    }
+    if (action.kind === "navigate") {
+      onSelectProfile?.(selectedAgent.id);
+      onNavigate?.(action.target as OfficeNavigationTarget);
+      return;
+    }
+    setActionBusy(action.id);
+    try {
+      await window.hermesAPI.restartGateway(selectedAgent.id);
+      await loadOfficeStatus();
+    } finally {
+      setActionBusy(null);
+    }
+  }, [loadOfficeStatus, onNavigate, onSelectProfile, selectedAgent]);
 
   return (
     <div
@@ -218,7 +238,7 @@ function Office({ profile, visible }: OfficeProps): React.JSX.Element {
           </span>
           <button
             type="button"
-            onClick={() => { void loadAgents(); void loadOperatorStatus(); }}
+            onClick={() => { void loadOfficeStatus(); }}
             disabled={loading}
             title={t("office.refresh")}
             style={{
@@ -260,34 +280,7 @@ function Office({ profile, visible }: OfficeProps): React.JSX.Element {
           background: "rgba(127,127,127,0.04)",
         }}
       >
-        {[
-          {
-            label: "ORION build",
-            value: operatorStatus.build?.manualUpdates
-              ? operatorStatus.build.upstreamVersion
-                ? `Manual update · upstream ${operatorStatus.build.upstreamVersion}`
-                : "Manual fork updates"
-              : "Upstream updater enabled",
-          },
-          {
-            label: "Remote gateway",
-            value: operatorStatus.gatewayRunning
-              ? `Running · ${operatorStatus.connectedPlatforms ?? 0} connected${operatorStatus.errorPlatforms ? ` · ${operatorStatus.errorPlatforms} errors` : ""}`
-              : "Stopped or unknown",
-          },
-          {
-            label: "Codex auth",
-            value: operatorStatus.codex?.configured
-              ? `Signed in via ${operatorStatus.codex.locationLabel}`
-              : "Not detected",
-          },
-          {
-            label: "Honcho memory",
-            value: operatorStatus.honcho?.configured
-              ? `Configured via ${operatorStatus.honcho.locationLabel}`
-              : "Not detected",
-          },
-        ].map((card) => (
+        {buildOperatorCards(officeStatus).map((card) => (
           <div
             key={card.label}
             style={{
@@ -468,7 +461,83 @@ function Office({ profile, visible }: OfficeProps): React.JSX.Element {
                   ? t("office.gatewayRunning")
                   : t("office.gatewayStopped")}
               </dd>
+
+              <dt style={{ opacity: 0.55 }}>Reason</dt>
+              <dd style={{ margin: 0 }}>{selectedAgent.stateReason || "—"}</dd>
+
+              <dt style={{ opacity: 0.55 }}>Recent work</dt>
+              <dd style={{ margin: 0 }}>
+                {selectedAgent.recentSessionCount ?? 0} sessions · {selectedAgent.recentMessageCount ?? 0} messages
+              </dd>
+
+              <dt style={{ opacity: 0.55 }}>Tasks</dt>
+              <dd style={{ margin: 0 }}>
+                {selectedAgent.kanban?.running ?? 0} running · {selectedAgent.kanban?.blocked ?? 0} blocked
+              </dd>
+
+              <dt style={{ opacity: 0.55 }}>Platforms</dt>
+              <dd style={{ margin: 0 }}>
+                {selectedAgent.platforms?.connected ?? 0} connected · {selectedAgent.platforms?.error ?? 0} errors
+              </dd>
             </dl>
+
+            {selectedStatusRows.length > 0 && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, opacity: 0.75 }}>Operational details</div>
+                {selectedStatusRows.map((row) => (
+                  <div
+                    key={row.label}
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      gap: 12,
+                      padding: "7px 9px",
+                      borderRadius: 8,
+                      background:
+                        row.severity === "error"
+                          ? "rgba(239,68,68,0.14)"
+                          : row.severity === "warning"
+                            ? "rgba(245,158,11,0.14)"
+                            : row.severity === "active"
+                              ? "rgba(34,197,94,0.14)"
+                              : "rgba(255,255,255,0.06)",
+                    }}
+                  >
+                    <span style={{ fontSize: 12, opacity: 0.65 }}>{row.label}</span>
+                    <span style={{ fontSize: 12, fontWeight: 700, textAlign: "right" }}>{row.value}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 8 }}>
+              {selectedActions.map((action) => (
+                <button
+                  key={action.id}
+                  type="button"
+                  disabled={Boolean(action.disabled) || actionBusy === action.id}
+                  onClick={() => void handleAgentAction(action)}
+                  title={action.disabled ? "Navigation is not available in this view yet" : action.label}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 8,
+                    padding: "9px 12px",
+                    borderRadius: 10,
+                    border: "1px solid rgba(255,255,255,0.14)",
+                    background: action.kind === "chat" ? "rgba(59,130,246,0.22)" : "rgba(255,255,255,0.07)",
+                    color: action.disabled ? "rgba(255,255,255,0.35)" : "rgba(255,255,255,0.9)",
+                    cursor: action.disabled ? "not-allowed" : "pointer",
+                    fontSize: 13,
+                    fontWeight: 650,
+                  }}
+                >
+                  {action.kind === "chat" ? <MessageCircle size={14} /> : action.kind === "restartGateway" ? <Power size={14} /> : null}
+                  {actionBusy === action.id ? "Working…" : action.label}
+                </button>
+              ))}
+            </div>
 
             <button
               type="button"
