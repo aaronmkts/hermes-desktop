@@ -290,6 +290,8 @@ import {
   sshRunUpdate,
   sshRunDump,
   sshDiscoverMemoryProviders,
+  sshInstallRegistryItem,
+  sshListInstalledRegistry,
 } from "./ssh-remote";
 import { applyGpuPreferences, installGpuCrashGuard } from "./gpu-fallback";
 
@@ -600,7 +602,8 @@ function setupIPC(): void {
 
   ipcMain.handle("get-env", (_event, profile?: string) => {
     const conn = getConnectionConfig();
-    if (conn.mode === "ssh" && conn.ssh) return sshReadEnvForRenderer(conn.ssh, profile);
+    if (conn.mode === "ssh" && conn.ssh)
+      return sshReadEnvForRenderer(conn.ssh, profile);
     return readEnv(profile);
   });
 
@@ -762,15 +765,18 @@ function setupIPC(): void {
 
   // API_SERVER_KEY management — lets the renderer detect a missing key and
   // generate one with a button click (local mode) or show instructions (remote/SSH).
-  ipcMain.handle("get-api-server-key-status", async (_event, profile?: string) => {
-    const conn = getConnectionConfig();
-    if (conn.mode === "ssh" && conn.ssh) {
-      const env = await sshReadEnv(conn.ssh, profile);
-      return { hasKey: (env.API_SERVER_KEY || "").trim().length > 0 };
-    }
-    const key = getApiServerKey(profile);
-    return { hasKey: key.length > 0 };
-  });
+  ipcMain.handle(
+    "get-api-server-key-status",
+    async (_event, profile?: string) => {
+      const conn = getConnectionConfig();
+      if (conn.mode === "ssh" && conn.ssh) {
+        const env = await sshReadEnv(conn.ssh, profile);
+        return { hasKey: (env.API_SERVER_KEY || "").trim().length > 0 };
+      }
+      const key = getApiServerKey(profile);
+      return { hasKey: key.length > 0 };
+    },
+  );
 
   ipcMain.handle(
     "generate-api-server-key",
@@ -1396,14 +1402,18 @@ function setupIPC(): void {
 
   ipcMain.handle("delete-session", (_event, sessionId: string) => {
     const conn = getConnectionConfig();
-    if (conn.mode === "ssh" && conn.ssh) return sshDeleteSession(conn.ssh, sessionId);
+    if (conn.mode === "ssh" && conn.ssh)
+      return sshDeleteSession(conn.ssh, sessionId);
     return deleteSession(sessionId);
   });
 
   ipcMain.handle("delete-sessions", (_event, sessionIds: string[]) => {
     const conn = getConnectionConfig();
     if (conn.mode === "ssh" && conn.ssh)
-      return sshDeleteSessions(conn.ssh, Array.isArray(sessionIds) ? sessionIds : []);
+      return sshDeleteSessions(
+        conn.ssh,
+        Array.isArray(sessionIds) ? sessionIds : [],
+      );
     return deleteSessions(Array.isArray(sessionIds) ? sessionIds : []);
   });
 
@@ -2020,9 +2030,12 @@ function setupIPC(): void {
   ipcMain.handle("registry-fetch", (_event, force?: boolean) =>
     fetchRegistry(!!force),
   );
-  ipcMain.handle("registry-list-installed", (_event, profile?: string) =>
-    listInstalledRegistry(profile),
-  );
+  ipcMain.handle("registry-list-installed", (_event, profile?: string) => {
+    const conn = getConnectionConfig();
+    if (conn.mode === "ssh" && conn.ssh)
+      return sshListInstalledRegistry(conn.ssh, profile);
+    return listInstalledRegistry(profile);
+  });
   ipcMain.handle(
     "registry-detail",
     (_event, kind: RegistryKind, item: RegistryItem) =>
@@ -2030,8 +2043,12 @@ function setupIPC(): void {
   );
   ipcMain.handle(
     "registry-install",
-    (_event, kind: RegistryKind, item: RegistryItem, profile?: string) =>
-      installRegistryItem(kind, item, profile),
+    (_event, kind: RegistryKind, item: RegistryItem, profile?: string) => {
+      const conn = getConnectionConfig();
+      if (conn.mode === "ssh" && conn.ssh)
+        return sshInstallRegistryItem(conn.ssh, kind, item, profile);
+      return installRegistryItem(kind, item, profile);
+    },
   );
 
   // Memory providers
