@@ -36,6 +36,7 @@ import {
   isSshTunnelHealthy,
   startSshTunnel,
 } from "./ssh-tunnel";
+import { sshReadEnv } from "./ssh-remote";
 import {
   pidIsAliveAs,
   stripAnsi,
@@ -397,7 +398,10 @@ export async function transcribeAudio(
   const resolved = resolveProfile(profile);
   const mc = getModelConfig(resolved);
   const baseUrl = (mc.baseUrl || "").replace(/\/+$/, "");
-  const env = readEnv(resolved);
+  const conn = getConnectionConfig();
+  const env = conn.mode === "ssh" && conn.ssh
+    ? await sshReadEnv(conn.ssh, resolved)
+    : readEnv(resolved);
   const route = resolveTranscriptionRoute({ baseUrl, env });
   if (!route) throw new Error(transcriptionErrorMessage({ baseUrl, env }));
 
