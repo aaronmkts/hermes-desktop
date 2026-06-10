@@ -3,6 +3,7 @@ import {
   buildWindowsScriptCommandLine,
   createClaw3dScriptInvocation,
   createNpmCommandInvocation,
+  chooseClaw3dPort,
   hasClaw3dOfficeRoute,
   isClaw3dOfficeStatusReady,
   shouldRefreshClaw3dCheckout,
@@ -168,5 +169,11 @@ describe("Claw3D command resolution", () => {
     expect(isClaw3dOfficeStatusReady(404)).toBe(false);
     expect(isClaw3dOfficeStatusReady(500)).toBe(false);
     expect(isClaw3dOfficeStatusReady(null)).toBe(false);
+  });
+
+  it("chooses the next available Claw3D port when the saved port is occupied", () => {
+    expect(chooseClaw3dPort(3000, (port) => port !== 3000)).toBe(3001);
+    expect(chooseClaw3dPort(3000, (port) => port !== 3000 && port !== 3001)).toBe(3002);
+    expect(chooseClaw3dPort(4123, (port) => port !== 3000)).toBe(4123);
   });
 });

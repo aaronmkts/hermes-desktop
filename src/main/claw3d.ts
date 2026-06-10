@@ -880,6 +880,43 @@ function needsClaw3dCheckoutRefresh(): boolean {
   return shouldRefreshClaw3dCheckout(claw3dPathExists);
 }
 
+
+export function chooseClaw3dPort(
+  savedPort: number,
+  isPortAvailable: (port: number) => boolean,
+): number {
+  if (isPortAvailable(savedPort)) return savedPort;
+  for (let port = Math.max(3001, savedPort + 1); port <= 3020; port += 1) {
+    if (isPortAvailable(port)) return port;
+  }
+  return savedPort;
+}
+
+function isPortAvailableSync(port: number): boolean {
+  const script = `
+const net = require('node:net');
+const port = Number(process.argv[1]);
+const server = net.createServer();
+server.once('error', () => process.exit(1));
+server.listen(port, '127.0.0.1', () => server.close(() => process.exit(0)));
+`;
+  const result = spawnSync(process.execPath, ["-e", script, String(port)], {
+    stdio: "ignore",
+    timeout: 1500,
+    windowsHide: true,
+  });
+  return result.status === 0;
+}
+
+function resolveClaw3dLaunchPort(): number {
+  const savedPort = getSavedPort();
+  const port = chooseClaw3dPort(savedPort, isPortAvailableSync);
+  if (port !== savedPort) {
+    safeWriteFile(PORT_FILE, String(port));
+  }
+  return port;
+}
+
 export function patchNextConfigForEmbedding(content: string): string {
   let patched = content.replace(/"frame-ancestors [^"]*"/g, '"frame-ancestors *"');
   patched = patched.replace(
@@ -1113,7 +1150,7 @@ export function startAll(profile?: string): { success: boolean; error?: string }
     };
   }
 
-  const port = getSavedPort();
+  const port = resolveClaw3dLaunchPort();
 
   // Refresh the `.env` before the processes read it, so Office always
   // starts against the current port/URL and the desktop's configured
