@@ -809,7 +809,7 @@ const hermesAPI = {
     ipcRenderer.invoke("update-model", id, fields),
 
   // Claw3D
-  claw3dStatus: (): Promise<{
+  claw3dStatus: (profile?: string): Promise<{
     cloned: boolean;
     installed: boolean;
     devServerRunning: boolean;
@@ -821,7 +821,7 @@ const hermesAPI = {
     error: string;
     remoteUrl?: string | null;
     remoteSource?: "ssh" | null;
-  }> => ipcRenderer.invoke("claw3d-status"),
+  }> => ipcRenderer.invoke("claw3d-status", profile),
 
   claw3dSetup: (): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke("claw3d-setup"),

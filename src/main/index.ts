@@ -1724,7 +1724,7 @@ function setupIPC(): void {
   );
 
   // Claw3D
-  ipcMain.handle("claw3d-status", () => getClaw3dStatus());
+  ipcMain.handle("claw3d-status", (_event, profile?: string) => getClaw3dStatus(profile));
 
   ipcMain.handle("claw3d-setup", async (event) => {
     try {

@@ -87,6 +87,7 @@ describe("Office Claw3D launcher", () => {
     renderOffice(status({ cloned: true, installed: true, running: false }));
 
     const start = await screen.findByRole("button", { name: /^start$/i });
+    await waitFor(() => expect(window.hermesAPI.claw3dStatus).toHaveBeenCalledWith("default"));
     expect(screen.getByText(/click start to open claw3d studio/i)).toBeInTheDocument();
     fireEvent.click(start);
 

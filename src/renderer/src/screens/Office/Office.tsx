@@ -79,7 +79,7 @@ function Office({
     if (!supportsClaw3d) return;
     setClaw3dLoading(true);
     try {
-      const status = await window.hermesAPI.claw3dStatus();
+      const status = await window.hermesAPI.claw3dStatus(profile);
       setClaw3dStatus(status);
       setClaw3dError(status.error || null);
     } catch (error) {

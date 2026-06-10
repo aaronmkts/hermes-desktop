@@ -557,11 +557,11 @@ export async function waitForClaw3dReady(
   return false;
 }
 
-export async function getClaw3dStatus(): Promise<Claw3dStatus> {
+export async function getClaw3dStatus(profile?: string): Promise<Claw3dStatus> {
   const cloned = existsSync(join(CLAW3D_INSTALL_DIR, "package.json"));
   const installed = existsSync(join(CLAW3D_INSTALL_DIR, "node_modules"));
   if (installed) {
-    writeClaw3dSettings();
+    writeClaw3dSettings(undefined, profile);
   }
   const port = getSavedPort();
   const devRunning = isDevServerRunning();
