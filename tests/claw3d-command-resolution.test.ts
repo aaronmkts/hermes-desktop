@@ -3,6 +3,7 @@ import {
   buildWindowsScriptCommandLine,
   createClaw3dScriptInvocation,
   createNpmCommandInvocation,
+  patchNextConfigForEmbedding,
   isWindowsCommandScript,
   pickWindowsCommandCandidate,
 } from "../src/main/claw3d";
@@ -116,5 +117,33 @@ describe("Claw3D command resolution", () => {
       command: "C:\\nvm4w\\nodejs\\node.exe",
       args: ["server/hermes-gateway-adapter.js"],
     });
+  });
+
+  it("relaxes Claw3D Next security headers so Hermes One can embed the Office frame", () => {
+    const input = `const securityHeaders = [
+  {
+    key: "Content-Security-Policy",
+    value: [
+      "default-src self",
+      "frame-ancestors self",
+      "connect-src self ws: wss: http: https:",
+    ].join("; "),
+  },
+  {
+    key: "X-Frame-Options",
+    value: "SAMEORIGIN",
+  },
+  {
+    key: "X-Content-Type-Options",
+    value: "nosniff",
+  },
+];`;
+
+    const patched = patchNextConfigForEmbedding(input);
+
+    expect(patched).toContain("frame-ancestors *");
+    expect(patched).not.toContain("frame-ancestors self");
+    expect(patched).not.toContain("X-Frame-Options");
+    expect(patched).toContain("X-Content-Type-Options");
   });
 });

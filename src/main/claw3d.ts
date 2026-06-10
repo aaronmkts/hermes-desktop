@@ -806,6 +806,8 @@ export async function setupClaw3d(
     });
   }
 
+  patchClaw3dForEmbedding();
+
   // Step 2: npm install
   emit(2, "Installing dependencies...", "Running npm install...\n");
   const npm = createNpmCommandInvocation(findNpm(env.PATH), ["install"]);
@@ -845,6 +847,32 @@ export async function setupClaw3d(
 
   // Write config files so Claw3D skips onboarding
   writeClaw3dSettings();
+}
+
+
+export function patchNextConfigForEmbedding(content: string): string {
+  let patched = content.replace(/"frame-ancestors [^"]*"/g, '"frame-ancestors *"');
+  patched = patched.replace(
+    /\n\s*\{\s*key:\s*"X-Frame-Options",\s*value:\s*"SAMEORIGIN",\s*\},/g,
+    "",
+  );
+  return patched;
+}
+
+function patchClaw3dForEmbedding(): void {
+  const nextConfigPath = join(CLAW3D_INSTALL_DIR, "next.config.ts");
+  if (!existsSync(nextConfigPath)) return;
+
+  try {
+    const current = readFileSync(nextConfigPath, "utf-8");
+    const patched = patchNextConfigForEmbedding(current);
+    if (patched !== current) {
+      safeWriteFile(nextConfigPath, patched);
+    }
+  } catch {
+    // Non-fatal. If upstream changes the config shape, startup should continue
+    // and the browser/iframe error will remain visible to the user.
+  }
 }
 
 function killProcessTree(proc: ChildProcess): void {
@@ -1054,6 +1082,7 @@ export function startAll(profile?: string): { success: boolean; error?: string }
   // starts against the current port/URL and the desktop's configured
   // model rather than a value frozen at first setup (issue #256).
   writeClaw3dSettings(undefined, profile);
+  patchClaw3dForEmbedding();
 
   // Start dev server
   const devOk = startDevServer(profile);
