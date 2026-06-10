@@ -99,6 +99,10 @@ export interface KanbanResult<T = unknown> {
 
 const KANBAN_TIMEOUT_MS = 20000;
 
+function missingTaskId(taskId: string): KanbanResult<void> | null {
+  return taskId?.trim() ? null : { success: false, error: "Missing task ID" };
+}
+
 interface RunOpts {
   profile?: string;
   parseJson?: boolean;
@@ -312,7 +316,9 @@ export async function assignTask(
   profile?: string,
 ): Promise<KanbanResult<void>> {
   if (isRemoteOnlyMode()) return unsupportedInRemote();
-  const res = await runKanban(["assign", taskId, assignee || "none"], {
+  const missing = missingTaskId(taskId);
+  if (missing) return missing;
+  const res = await runKanban(["assign", taskId.trim(), assignee || "none"], {
     profile,
   });
   return { success: res.success, error: res.error };
@@ -324,7 +330,9 @@ export async function completeTask(
   profile?: string,
 ): Promise<KanbanResult<void>> {
   if (isRemoteOnlyMode()) return unsupportedInRemote();
-  const args = ["complete", taskId];
+  const missing = missingTaskId(taskId);
+  if (missing) return missing;
+  const args = ["complete", taskId.trim()];
   if (result) args.push("--result", result);
   const res = await runKanban(args, { profile });
   return { success: res.success, error: res.error };
@@ -336,7 +344,9 @@ export async function blockTask(
   profile?: string,
 ): Promise<KanbanResult<void>> {
   if (isRemoteOnlyMode()) return unsupportedInRemote();
-  const args = ["block", taskId];
+  const missing = missingTaskId(taskId);
+  if (missing) return missing;
+  const args = ["block", taskId.trim()];
   if (reason) args.push(reason);
   const res = await runKanban(args, { profile });
   return { success: res.success, error: res.error };
@@ -347,7 +357,9 @@ export async function unblockTask(
   profile?: string,
 ): Promise<KanbanResult<void>> {
   if (isRemoteOnlyMode()) return unsupportedInRemote();
-  const res = await runKanban(["unblock", taskId], { profile });
+  const missing = missingTaskId(taskId);
+  if (missing) return missing;
+  const res = await runKanban(["unblock", taskId.trim()], { profile });
   return { success: res.success, error: res.error };
 }
 
@@ -356,7 +368,9 @@ export async function archiveTask(
   profile?: string,
 ): Promise<KanbanResult<void>> {
   if (isRemoteOnlyMode()) return unsupportedInRemote();
-  const res = await runKanban(["archive", taskId], { profile });
+  const missing = missingTaskId(taskId);
+  if (missing) return missing;
+  const res = await runKanban(["archive", taskId.trim()], { profile });
   return { success: res.success, error: res.error };
 }
 
@@ -365,7 +379,9 @@ export async function specifyTask(
   profile?: string,
 ): Promise<KanbanResult<void>> {
   if (isRemoteOnlyMode()) return unsupportedInRemote();
-  const res = await runKanban(["specify", taskId], { profile });
+  const missing = missingTaskId(taskId);
+  if (missing) return missing;
+  const res = await runKanban(["specify", taskId.trim()], { profile });
   return { success: res.success, error: res.error };
 }
 
@@ -375,7 +391,9 @@ export async function reclaimTask(
   profile?: string,
 ): Promise<KanbanResult<void>> {
   if (isRemoteOnlyMode()) return unsupportedInRemote();
-  const args = ["reclaim", taskId];
+  const missing = missingTaskId(taskId);
+  if (missing) return missing;
+  const args = ["reclaim", taskId.trim()];
   if (reason) args.push("--reason", reason);
   const res = await runKanban(args, { profile });
   return { success: res.success, error: res.error };
@@ -387,8 +405,10 @@ export async function commentTask(
   profile?: string,
 ): Promise<KanbanResult<void>> {
   if (isRemoteOnlyMode()) return unsupportedInRemote();
+  const missing = missingTaskId(taskId);
+  if (missing) return missing;
   if (!body.trim()) return { success: false, error: "Empty comment" };
-  const res = await runKanban(["comment", taskId, body], { profile });
+  const res = await runKanban(["comment", taskId.trim(), body], { profile });
   return { success: res.success, error: res.error };
 }
 

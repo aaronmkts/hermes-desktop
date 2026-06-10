@@ -8,6 +8,7 @@ import type {
 } from "../shared/messaging-platforms";
 import type { ChatToolEvent } from "../shared/chat-stream";
 import type { OfficeStatus } from "../main/office-status";
+import type { OfficeLayout } from "../shared/office-layout";
 
 /**
  * Mirror of the renderer-side `CredentialPoolEntry` ambient type
@@ -519,6 +520,12 @@ const hermesAPI = {
   gatewayStatus: (): Promise<boolean> => ipcRenderer.invoke("gateway-status"),
   getOfficeStatus: (profile?: string): Promise<OfficeStatus> =>
     ipcRenderer.invoke("office-status", profile),
+  getOfficeLayout: (): Promise<OfficeLayout> =>
+    ipcRenderer.invoke("office-layout-get"),
+  saveOfficeLayout: (layout: unknown): Promise<OfficeLayout> =>
+    ipcRenderer.invoke("office-layout-save", layout),
+  resetOfficeLayout: (): Promise<OfficeLayout> =>
+    ipcRenderer.invoke("office-layout-reset"),
 
   // Platform toggles
   getPlatformEnabled: (profile?: string): Promise<Record<string, boolean>> =>

@@ -74,6 +74,7 @@ vi.mock("../src/main/installer", () => ({
 vi.mock("../src/main/config", () => ({
   getModelConfig: () => ({ model: "test-model", provider: "openrouter" }),
   getConfigValue: () => "",
+  readDesktopConfig: () => ({}),
   readEnv: () => ({}),
   getConnectionConfig: () => ({
     mode: "remote" as const,

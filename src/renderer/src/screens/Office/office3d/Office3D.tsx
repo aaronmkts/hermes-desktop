@@ -13,17 +13,18 @@ import * as THREE from "three";
 import { AgentModel } from "./objects/agents";
 import { RIGGED_EMPLOYEE_URL, RIGGED_MAN_URL } from "./objects/RiggedCharacter";
 import { Workstations, FurniturePieces } from "./objects/furniture";
+import { KanbanBoard3D } from "./objects/KanbanBoard3D";
+import { buildOfficeKanbanBoard } from "./kanbanBoard";
 import {
-  buildWorkstations,
   REST_SEATS,
-  REST_FURNITURE,
-  EXECUTIVE_DECOR,
   INTERIOR_WALLS,
   DIVIDER_X,
   DOOR_Y,
   type Workstation,
   type Seat,
 } from "./layout";
+import type { OfficeLayout, OfficeLayoutItemId } from "./layoutModel";
+import { getOffice3DLayoutRenderState } from "./office3dLayoutAdapter";
 import { WORLD_W, WORLD_H, WALK_SPEED, SCALE } from "./core/constants";
 import { toWorld } from "./core/geometry";
 import type { OfficeAgent, RenderAgent } from "./core/types";
@@ -244,7 +245,8 @@ function AgentsLayer({
       agent.frame += step * 60;
 
       // Active/available agents sit at their desk; idle/offline/error/waiting agents rest.
-      const deskReady = agent.status === "active" || agent.status === "available";
+      const deskReady =
+        agent.status === "active" || agent.status === "available";
       const goalKey: "desk" | "rest" = deskReady ? "desk" : "rest";
       const goal = deskReady
         ? deskSeatByAgent.get(agent.id)
@@ -415,13 +417,22 @@ export default function Office3D({
   agents,
   selectedId,
   onSelectAgent,
+  layout,
+  editMode = false,
+  selectedLayoutItemId = null,
+  onSelectLayoutItem,
 }: {
   agents: OfficeAgent[];
   selectedId: string | null;
   onSelectAgent: (id: string | null) => void;
+  layout?: OfficeLayout;
+  editMode?: boolean;
+  selectedLayoutItemId?: OfficeLayoutItemId | null;
+  onSelectLayoutItem?: (id: OfficeLayoutItemId | null) => void;
 }): React.JSX.Element {
   // Clicking the selected agent again clears the selection.
   const handleSelect = (id: string): void => {
+    if (editMode) return;
     onSelectAgent(id === selectedId ? null : id);
   };
 
@@ -431,15 +442,24 @@ export default function Office3D({
     [agents],
   );
 
-  // One desk per agent, assigned in profile order.
-  const workstations = useMemo(
-    () =>
-      buildWorkstations(
-        agents.map((a) => a.id),
-        ceoId,
-      ),
-    [agents, ceoId],
+  const agentIds = useMemo(() => agents.map((a) => a.id), [agents]);
+  const board = useMemo(
+    () => buildOfficeKanbanBoard(agents, { maxCardsPerColumn: 6 }),
+    [agents],
   );
+  const renderState = useMemo(
+    () =>
+      getOffice3DLayoutRenderState({
+        agentIds,
+        ceoId,
+        layout,
+        editMode,
+        selectedLayoutItemId,
+      }),
+    [agentIds, ceoId, layout, editMode, selectedLayoutItemId],
+  );
+  const { workstations, furniture } = renderState;
+  const selectLayoutItem = editMode ? onSelectLayoutItem : undefined;
 
   // Only the background follows the app's light/dark theme.
   const { resolved } = useTheme();
@@ -469,7 +489,10 @@ export default function Office3D({
         toneMapping: THREE.ACESFilmicToneMapping,
         toneMappingExposure: 1.05,
       }}
-      onPointerMissed={() => onSelectAgent(null)}
+      onPointerMissed={() => {
+        if (editMode) onSelectLayoutItem?.(null);
+        else onSelectAgent(null);
+      }}
       style={{ width: "100%", height: "100%" }}
     >
       <color attach="background" args={[background]} />
@@ -534,10 +557,18 @@ export default function Office3D({
       />
       <Room palette={palette} />
       <InteriorWalls palette={palette} />
+      <KanbanBoard3D board={board} />
       <Suspense fallback={null}>
-        <Workstations workstations={workstations} />
-        <FurniturePieces pieces={REST_FURNITURE} />
-        {ceoId && <FurniturePieces pieces={EXECUTIVE_DECOR} />}
+        <Workstations
+          workstations={workstations}
+          selectedItemId={selectedLayoutItemId}
+          onSelectItem={selectLayoutItem}
+        />
+        <FurniturePieces
+          pieces={furniture}
+          selectedItemId={selectedLayoutItemId}
+          onSelectItem={selectLayoutItem}
+        />
       </Suspense>
       <AgentsLayer
         agents={agents}
