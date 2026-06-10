@@ -1,4 +1,5 @@
 import type { AgentAvatarProfile } from "../avatars/profile";
+import type { OfficeKanbanCard } from "../../../../../../main/office-status";
 
 // Originally `@/lib/office/places` in hermes-office; the office tab only needs
 // the structural agent types, so we keep this as an open string identifier.
@@ -7,7 +8,13 @@ export type OfficeInteractionTargetId = string;
 /** An agent's org position. Everyone is an employee; exactly one can be CEO. */
 export type AgentPosition = "employee" | "ceo";
 
-export type OfficeAgentStatus = "active" | "available" | "idle" | "offline" | "error" | "waiting";
+export type OfficeAgentStatus =
+  | "active"
+  | "available"
+  | "idle"
+  | "offline"
+  | "error"
+  | "waiting";
 
 export type OfficeAgent = {
   id: string;
@@ -26,7 +33,14 @@ export type OfficeAgent = {
   recentSessionCount?: number;
   recentMessageCount?: number;
   lastInteractionAt?: number | null;
-  kanban?: { todo: number; ready: number; running: number; blocked: number; doneRecent: number };
+  kanban?: {
+    todo: number;
+    ready: number;
+    running: number;
+    blocked: number;
+    doneRecent: number;
+  };
+  kanbanCards?: OfficeKanbanCard[];
   platforms?: { connected: number; error: number; configured: number };
   description?: string | null;
   personality?: string | null;

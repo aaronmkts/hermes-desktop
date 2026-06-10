@@ -13,6 +13,8 @@ import * as THREE from "three";
 import { AgentModel } from "./objects/agents";
 import { RIGGED_EMPLOYEE_URL, RIGGED_MAN_URL } from "./objects/RiggedCharacter";
 import { Workstations, FurniturePieces } from "./objects/furniture";
+import { KanbanBoard3D } from "./objects/KanbanBoard3D";
+import { buildOfficeKanbanBoard } from "./kanbanBoard";
 import {
   buildWorkstations,
   REST_SEATS,
@@ -244,7 +246,8 @@ function AgentsLayer({
       agent.frame += step * 60;
 
       // Active/available agents sit at their desk; idle/offline/error/waiting agents rest.
-      const deskReady = agent.status === "active" || agent.status === "available";
+      const deskReady =
+        agent.status === "active" || agent.status === "available";
       const goalKey: "desk" | "rest" = deskReady ? "desk" : "rest";
       const goal = deskReady
         ? deskSeatByAgent.get(agent.id)
@@ -432,6 +435,11 @@ export default function Office3D({
   );
 
   // One desk per agent, assigned in profile order.
+  const board = useMemo(
+    () => buildOfficeKanbanBoard(agents, { maxCardsPerColumn: 6 }),
+    [agents],
+  );
+
   const workstations = useMemo(
     () =>
       buildWorkstations(
@@ -534,6 +542,7 @@ export default function Office3D({
       />
       <Room palette={palette} />
       <InteriorWalls palette={palette} />
+      <KanbanBoard3D board={board} />
       <Suspense fallback={null}>
         <Workstations workstations={workstations} />
         <FurniturePieces pieces={REST_FURNITURE} />
