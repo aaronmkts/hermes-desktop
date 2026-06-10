@@ -3,6 +3,8 @@ import {
   buildWindowsScriptCommandLine,
   createClaw3dScriptInvocation,
   createNpmCommandInvocation,
+  hasClaw3dOfficeRoute,
+  shouldRefreshClaw3dCheckout,
   patchNextConfigForEmbedding,
   isWindowsCommandScript,
   pickWindowsCommandCandidate,
@@ -145,5 +147,16 @@ describe("Claw3D command resolution", () => {
     expect(patched).not.toContain("frame-ancestors self");
     expect(patched).not.toContain("X-Frame-Options");
     expect(patched).toContain("X-Content-Type-Options");
+  });
+
+  it("requires the modern Claw3D Office app route before treating the checkout as current", () => {
+    expect(hasClaw3dOfficeRoute((path) => path === "src/app/office/page.tsx")).toBe(true);
+    expect(hasClaw3dOfficeRoute(() => false)).toBe(false);
+    expect(shouldRefreshClaw3dCheckout((path) => path === "package.json")).toBe(true);
+    expect(
+      shouldRefreshClaw3dCheckout(
+        (path) => path === "package.json" || path === "src/app/office/page.tsx",
+      ),
+    ).toBe(false);
   });
 });

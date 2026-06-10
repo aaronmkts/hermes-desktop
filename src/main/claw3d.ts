@@ -5,6 +5,7 @@ import {
   readdirSync,
   unlinkSync,
   mkdirSync,
+  rmSync,
 } from "fs";
 import { join, win32 } from "path";
 import { homedir } from "os";
@@ -591,8 +592,10 @@ export async function waitForClaw3dReady(
 }
 
 export async function getClaw3dStatus(profile?: string): Promise<Claw3dStatus> {
-  const cloned = existsSync(join(CLAW3D_INSTALL_DIR, "package.json"));
-  const installed = existsSync(join(CLAW3D_INSTALL_DIR, "node_modules"));
+  const packageJsonExists = existsSync(join(CLAW3D_INSTALL_DIR, "package.json"));
+  const refreshNeeded = needsClaw3dCheckoutRefresh();
+  const cloned = packageJsonExists && !refreshNeeded;
+  const installed = cloned && existsSync(join(CLAW3D_INSTALL_DIR, "node_modules"));
   if (installed) {
     writeClaw3dSettings(undefined, profile);
   }
@@ -738,9 +741,12 @@ export async function setupClaw3d(
   const git = resolveCommand("git", env.PATH);
 
   // Step 1: Clone (or pull if already cloned)
-  const cloned = existsSync(join(CLAW3D_INSTALL_DIR, "package.json"));
+  const cloned = existsSync(join(CLAW3D_INSTALL_DIR, "package.json")) && !needsClaw3dCheckoutRefresh();
 
   if (!cloned) {
+    if (existsSync(CLAW3D_INSTALL_DIR)) {
+      rmSync(CLAW3D_INSTALL_DIR, { recursive: true, force: true });
+    }
     emit(1, "Cloning Claw3D repository...", "Cloning from GitHub...\n");
     await new Promise<void>((resolve, reject) => {
       const gitClone = createCommandInvocation(git, [
@@ -849,6 +855,23 @@ export async function setupClaw3d(
   writeClaw3dSettings();
 }
 
+
+
+export function hasClaw3dOfficeRoute(fileExists: (relativePath: string) => boolean): boolean {
+  return fileExists("src/app/office/page.tsx");
+}
+
+export function shouldRefreshClaw3dCheckout(fileExists: (relativePath: string) => boolean): boolean {
+  return fileExists("package.json") && !hasClaw3dOfficeRoute(fileExists);
+}
+
+function claw3dPathExists(relativePath: string): boolean {
+  return existsSync(join(CLAW3D_INSTALL_DIR, relativePath));
+}
+
+function needsClaw3dCheckoutRefresh(): boolean {
+  return shouldRefreshClaw3dCheckout(claw3dPathExists);
+}
 
 export function patchNextConfigForEmbedding(content: string): string {
   let patched = content.replace(/"frame-ancestors [^"]*"/g, '"frame-ancestors *"');
@@ -1069,6 +1092,13 @@ export function stopAdapter(): void {
 }
 
 export function startAll(profile?: string): { success: boolean; error?: string } {
+  if (needsClaw3dCheckoutRefresh()) {
+    return {
+      success: false,
+      error: "Claw3D checkout is outdated. Please reinstall Claw3D from Office first.",
+    };
+  }
+
   if (!existsSync(join(CLAW3D_INSTALL_DIR, "node_modules"))) {
     return {
       success: false,
