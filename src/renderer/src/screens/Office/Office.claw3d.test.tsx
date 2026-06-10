@@ -98,6 +98,16 @@ describe("Office Claw3D launcher", () => {
     await waitFor(() => expect(window.hermesAPI.claw3dStartAll).toHaveBeenCalledWith("default"));
   });
 
+  it("keeps Start clickable when the Claw3D port is already in use so launcher can recover or report an error", async () => {
+    renderOffice(status({ cloned: true, installed: true, running: false, portInUse: true }));
+
+    const start = await screen.findByRole("button", { name: /^start$/i });
+    expect(start).toBeEnabled();
+    fireEvent.click(start);
+
+    await waitFor(() => expect(window.hermesAPI.claw3dStartAll).toHaveBeenCalledWith("default"));
+  });
+
   it("embeds the Claw3D Studio runtime using remoteUrl when running", async () => {
     renderOffice(status({ cloned: true, installed: true, running: true, port: 5178, remoteUrl: "https://office.example.invalid/session" }));
 

@@ -384,7 +384,7 @@ function Office({
               <h2>{t("office.loadingClaw3d")}</h2>
               <p>{t("office.clickToStart")}</p>
               {claw3dError && <p role="alert">{claw3dError}</p>}
-              <button type="button" onClick={() => void handleClaw3dStart()} disabled={claw3dBusy !== null || claw3dStatus?.portInUse} style={{ ...claw3dPrimaryButtonStyle, ...(claw3dBusy !== null || claw3dStatus?.portInUse ? claw3dDisabledButtonStyle : {}) }}>
+              <button type="button" onClick={() => void handleClaw3dStart()} disabled={claw3dBusy !== null} style={{ ...claw3dPrimaryButtonStyle, ...(claw3dBusy !== null ? claw3dDisabledButtonStyle : {}) }}>
                 {claw3dBusy === "start" ? t("office.starting") : "Start"}
               </button>
             </section>

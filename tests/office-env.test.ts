@@ -7,6 +7,7 @@ import {
   buildOfficeSettings,
   getClaw3dWsUrl,
   normalizeClaw3dWsUrl,
+  resolveClaw3dReadyProbeTargets,
   writeOfficeFileIfChanged,
 } from "../src/main/claw3d";
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "fs";
@@ -128,6 +129,31 @@ describe("adapterPortFromWsUrl", () => {
   it("falls back to a Windows-safe default when the URL has no usable port", () => {
     expect(adapterPortFromWsUrl("ws://localhost")).toBe(18789);
     expect(adapterPortFromWsUrl("not a url")).toBe(18789);
+  });
+});
+
+describe("resolveClaw3dReadyProbeTargets", () => {
+  it("probes local Claw3D Studio and local Hermes adapter even when Hermes backend uses SSH", () => {
+    expect(
+      resolveClaw3dReadyProbeTargets(
+        {
+          mode: "ssh",
+          ssh: {
+            host: "153.92.211.161",
+            user: "root",
+            port: 22,
+            identityFile: "~/.ssh/id_rsa",
+          },
+        },
+        3000,
+        18789,
+      ),
+    ).toEqual({
+      officeUrl: "http://127.0.0.1:3000/office",
+      adapterHost: "127.0.0.1",
+      adapterPort: 18789,
+      requireAdapter: true,
+    });
   });
 });
 

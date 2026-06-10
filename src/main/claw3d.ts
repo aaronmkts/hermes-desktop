@@ -11,7 +11,7 @@ import { homedir } from "os";
 import { createConnection } from "net";
 import { getEnhancedPath, HERMES_HOME } from "./installer";
 import { stripAnsi, safeWriteFile } from "./utils";
-import { getApiServerKey, getConnectionConfig, getModelConfig } from "./config";
+import { getApiServerKey, getConnectionConfig, getModelConfig, type ConnectionConfig } from "./config";
 import { getApiUrl } from "./hermes";
 import http from "http";
 
@@ -538,25 +538,48 @@ function probeHttp(url: string, timeoutMs = 1500): Promise<boolean> {
   });
 }
 
+export interface Claw3dReadyProbeTargets {
+  officeUrl: string;
+  adapterHost: string;
+  adapterPort: number;
+  requireAdapter: boolean;
+}
+
+export function resolveClaw3dReadyProbeTargets(
+  _conn: ConnectionConfig,
+  port: number,
+  adapterPort: number,
+): Claw3dReadyProbeTargets {
+  // Claw3D Studio and the Hermes gateway adapter are local desktop processes.
+  // SSH mode only changes where the Hermes HTTP backend lives; Hermes One
+  // reaches that backend through its own SSH tunnel. Readiness must therefore
+  // probe local Claw3D, not `conn.ssh.host:3000` on the VPS.
+  return {
+    officeUrl: `http://127.0.0.1:${port}/office`,
+    adapterHost: "127.0.0.1",
+    adapterPort,
+    requireAdapter: true,
+  };
+}
+
 export async function waitForClaw3dReady(
   timeoutMs = 45000,
   intervalMs = 1000,
 ): Promise<boolean> {
   const port = getSavedPort();
   const conn = getConnectionConfig();
-  const host = conn.mode === "ssh" && conn.ssh?.host ? conn.ssh.host : "127.0.0.1";
-  const url = `http://${host}:${port}/office`;
-  const adapterPort = adapterPortFromWsUrl(getSavedWsUrl());
+  const targets = resolveClaw3dReadyProbeTargets(
+    conn,
+    port,
+    adapterPortFromWsUrl(getSavedWsUrl()),
+  );
   const deadline = Date.now() + timeoutMs;
 
   while (Date.now() < deadline) {
-    const officeReady = await probeHttp(url, Math.min(intervalMs, 2000));
-    const adapterReady =
-      conn.mode === "local" ||
-      conn.mode === "remote" ||
-      !conn.ssh?.host
-        ? await probeTcp(adapterPort, "127.0.0.1", Math.min(intervalMs, 2000))
-        : true;
+    const officeReady = await probeHttp(targets.officeUrl, Math.min(intervalMs, 2000));
+    const adapterReady = targets.requireAdapter
+      ? await probeTcp(targets.adapterPort, targets.adapterHost, Math.min(intervalMs, 2000))
+      : true;
 
     if (officeReady && adapterReady) {
       return true;
