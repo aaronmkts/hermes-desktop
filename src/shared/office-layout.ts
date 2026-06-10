@@ -6,6 +6,7 @@ export type OfficeFurnitureType =
   | "executiveDesk"
   | "chair"
   | "couch"
+  | "sofaChair"
   | "beanbag"
   | "plant"
   | "whitePot"
@@ -95,6 +96,7 @@ const ALLOWED_FURNITURE_TYPES = new Set<OfficeFurnitureType>([
   "executiveDesk",
   "chair",
   "couch",
+  "sofaChair",
   "beanbag",
   "plant",
   "whitePot",
