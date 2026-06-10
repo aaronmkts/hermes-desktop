@@ -1,13 +1,31 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Crown, MessageCircle, Power, RefreshCw, Users, X } from "lucide-react";
+import {
+  Crown,
+  MessageCircle,
+  Move,
+  Power,
+  RefreshCw,
+  RotateCcw,
+  Save,
+  Users,
+  X,
+} from "lucide-react";
 import { useI18n } from "../../components/useI18n";
 import oneChatIcon from "../../assets/images/one-chat.svg";
 import OneChatModal from "./OneChatModal";
 import Office3D from "./office3d/Office3D";
 import { buildOperatorCards, officeStatusToAgents } from "./officeStatus";
 import type { OfficeAgent } from "./office3d/core/types";
-import { buildOfficeAgentActions, buildOfficeAgentStatusRows, type OfficeNavigationTarget } from "./officeActions";
+import {
+  buildOfficeAgentActions,
+  buildOfficeAgentStatusRows,
+  type OfficeNavigationTarget,
+} from "./officeActions";
 import type { OfficeStatus } from "../../../../main/office-status";
+import {
+  OFFICE_LAYOUT_STORAGE_KEY,
+  useOfficeLayoutDraft,
+} from "./useOfficeLayoutDraft";
 
 interface OfficeProps {
   profile?: string;
@@ -32,7 +50,12 @@ function readStoredCeo(): string | null {
  * The Office tab. Renders a native, in-renderer 3D office (no external dev
  * server / webview) where each Hermes profile appears as an interactive agent.
  */
-function Office({ profile, visible, onNavigate, onSelectProfile }: OfficeProps): React.JSX.Element {
+function Office({
+  profile,
+  visible,
+  onNavigate,
+  onSelectProfile,
+}: OfficeProps): React.JSX.Element {
   const { t } = useI18n();
   const [agents, setAgents] = useState<OfficeAgent[]>([]);
   const [loading, setLoading] = useState(true);
@@ -41,6 +64,7 @@ function Office({ profile, visible, onNavigate, onSelectProfile }: OfficeProps):
   const [chatOpen, setChatOpen] = useState(false);
   const [officeStatus, setOfficeStatus] = useState<OfficeStatus | null>(null);
   const [actionBusy, setActionBusy] = useState<string | null>(null);
+  const [designMode, setDesignMode] = useState(false);
 
   const setCeo = useCallback((id: string | null) => {
     setCeoId(id);
@@ -54,7 +78,6 @@ function Office({ profile, visible, onNavigate, onSelectProfile }: OfficeProps):
   // Avoid refetching every time the tab regains visibility within a session;
   // only the first reveal and explicit refreshes hit IPC.
   const loadedOnce = useRef(false);
-
 
   const loadOfficeStatus = useCallback(async () => {
     setLoading(true);
@@ -144,8 +167,24 @@ function Office({ profile, visible, onNavigate, onSelectProfile }: OfficeProps):
     [agents, ceoId],
   );
 
-  const selectedAgent =
-    positionedAgents.find((a) => a.id === selectedId) ?? null;
+  const agentIds = useMemo(
+    () => positionedAgents.map((a) => a.id),
+    [positionedAgents],
+  );
+  const layoutDraft = useOfficeLayoutDraft({
+    storageKey: `${OFFICE_LAYOUT_STORAGE_KEY}:${profile ?? "default"}`,
+    agentIds,
+    ceoId,
+  });
+  const selectedDesk = layoutDraft.selectedItemId?.startsWith("desk:")
+    ? (layoutDraft.layout.workstations.find(
+        (d) => `desk:${d.id}` === layoutDraft.selectedItemId,
+      ) ?? null)
+    : null;
+
+  const selectedAgent = !designMode
+    ? (positionedAgents.find((a) => a.id === selectedId) ?? null)
+    : null;
   const selectedActions = selectedAgent
     ? buildOfficeAgentActions(selectedAgent, {
         chat: true,
@@ -173,27 +212,29 @@ function Office({ profile, visible, onNavigate, onSelectProfile }: OfficeProps):
               ? "#64748b"
               : "#f59e0b";
 
-
-  const handleAgentAction = useCallback(async (action: ReturnType<typeof buildOfficeAgentActions>[number]) => {
-    if (!selectedAgent || action.disabled) return;
-    if (action.kind === "chat") {
-      onSelectProfile?.(selectedAgent.id);
-      setChatOpen(true);
-      return;
-    }
-    if (action.kind === "navigate") {
-      onSelectProfile?.(selectedAgent.id);
-      onNavigate?.(action.target as OfficeNavigationTarget);
-      return;
-    }
-    setActionBusy(action.id);
-    try {
-      await window.hermesAPI.restartGateway(selectedAgent.id);
-      await loadOfficeStatus();
-    } finally {
-      setActionBusy(null);
-    }
-  }, [loadOfficeStatus, onNavigate, onSelectProfile, selectedAgent]);
+  const handleAgentAction = useCallback(
+    async (action: ReturnType<typeof buildOfficeAgentActions>[number]) => {
+      if (!selectedAgent || action.disabled) return;
+      if (action.kind === "chat") {
+        onSelectProfile?.(selectedAgent.id);
+        setChatOpen(true);
+        return;
+      }
+      if (action.kind === "navigate") {
+        onSelectProfile?.(selectedAgent.id);
+        onNavigate?.(action.target as OfficeNavigationTarget);
+        return;
+      }
+      setActionBusy(action.id);
+      try {
+        await window.hermesAPI.restartGateway(selectedAgent.id);
+        await loadOfficeStatus();
+      } finally {
+        setActionBusy(null);
+      }
+    },
+    [loadOfficeStatus, onNavigate, onSelectProfile, selectedAgent],
+  );
 
   return (
     <div
@@ -238,7 +279,32 @@ function Office({ profile, visible, onNavigate, onSelectProfile }: OfficeProps):
           </span>
           <button
             type="button"
-            onClick={() => { void loadOfficeStatus(); }}
+            onClick={() => {
+              setDesignMode((value) => {
+                const next = !value;
+                if (next) setSelectedId(null);
+                else layoutDraft.selectItem(null);
+                return next;
+              });
+            }}
+            aria-pressed={designMode}
+            style={{
+              padding: "6px 10px",
+              borderRadius: 8,
+              border: "1px solid var(--border, rgba(0,0,0,0.12))",
+              background: designMode ? "rgba(56,189,248,0.16)" : "transparent",
+              color: "var(--text-secondary)",
+              cursor: "pointer",
+              fontSize: 13,
+            }}
+          >
+            Design mode{layoutDraft.dirty ? " *" : ""}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              void loadOfficeStatus();
+            }}
             disabled={loading}
             title={t("office.refresh")}
             style={{
@@ -315,6 +381,10 @@ function Office({ profile, visible, onNavigate, onSelectProfile }: OfficeProps):
           agents={positionedAgents}
           selectedId={selectedId}
           onSelectAgent={setSelectedId}
+          layout={layoutDraft.layout}
+          editMode={designMode}
+          selectedLayoutItemId={layoutDraft.selectedItemId}
+          onSelectLayoutItem={layoutDraft.selectItem}
         />
 
         <button
@@ -334,6 +404,147 @@ function Office({ profile, visible, onNavigate, onSelectProfile }: OfficeProps):
           onClose={() => setChatOpen(false)}
           agents={positionedAgents}
         />
+
+        {designMode && (
+          <aside
+            aria-label="Office design inspector"
+            style={{
+              position: "absolute",
+              top: 0,
+              right: 0,
+              bottom: 0,
+              width: 320,
+              display: "flex",
+              flexDirection: "column",
+              gap: 12,
+              padding: "18px",
+              background: "var(--card, rgba(20,24,33,0.96))",
+              color: "#fff",
+              borderLeft: "1px solid rgba(255,255,255,0.08)",
+              boxShadow: "-12px 0 32px rgba(0,0,0,0.28)",
+              overflowY: "auto",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+              }}
+            >
+              <strong>Design inspector</strong>
+              <button
+                type="button"
+                onClick={() => {
+                  setDesignMode(false);
+                  layoutDraft.selectItem(null);
+                }}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  color: "#fff",
+                  cursor: "pointer",
+                }}
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div style={{ fontSize: 12, opacity: 0.75 }}>
+              Selected: {layoutDraft.selectedItemId ?? "none"}
+            </div>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr 1fr",
+                gap: 8,
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => layoutDraft.moveSelected(0, -10)}
+                aria-label="Move up"
+              >
+                <Move size={14} /> Up
+              </button>
+              <button
+                type="button"
+                onClick={() => layoutDraft.moveSelected(-10, 0)}
+                aria-label="Move left"
+              >
+                Left
+              </button>
+              <button
+                type="button"
+                onClick={() => layoutDraft.moveSelected(10, 0)}
+                aria-label="Move right"
+              >
+                Right
+              </button>
+              <button
+                type="button"
+                onClick={() => layoutDraft.moveSelected(0, 10)}
+                aria-label="Move down"
+              >
+                Down
+              </button>
+              <button
+                type="button"
+                onClick={() => layoutDraft.rotateSelected(-15)}
+                aria-label="Rotate left"
+              >
+                <RotateCcw size={14} /> -15°
+              </button>
+              <button
+                type="button"
+                onClick={() => layoutDraft.rotateSelected(15)}
+                aria-label="Rotate right"
+              >
+                +15°
+              </button>
+            </div>
+            {selectedDesk && (
+              <label
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 6,
+                  fontSize: 13,
+                }}
+              >
+                Desk assignment
+                <select
+                  value={selectedDesk.agentId ?? ""}
+                  onChange={(event) =>
+                    layoutDraft.assignDesk(
+                      selectedDesk.id,
+                      event.target.value || null,
+                    )
+                  }
+                >
+                  <option value="">Unassigned</option>
+                  {positionedAgents.map((agent) => (
+                    <option key={agent.id} value={agent.id}>
+                      {agent.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            <button
+              type="button"
+              onClick={layoutDraft.save}
+              disabled={!layoutDraft.dirty}
+            >
+              <Save size={14} /> Save layout
+            </button>
+            <button type="button" onClick={layoutDraft.resetDraft}>
+              Reset draft
+            </button>
+            <button type="button" onClick={layoutDraft.resetToDefault}>
+              Reset to default
+            </button>
+          </aside>
+        )}
 
         {selectedAgent && (
           <aside
@@ -467,23 +678,28 @@ function Office({ profile, visible, onNavigate, onSelectProfile }: OfficeProps):
 
               <dt style={{ opacity: 0.55 }}>Recent work</dt>
               <dd style={{ margin: 0 }}>
-                {selectedAgent.recentSessionCount ?? 0} sessions · {selectedAgent.recentMessageCount ?? 0} messages
+                {selectedAgent.recentSessionCount ?? 0} sessions ·{" "}
+                {selectedAgent.recentMessageCount ?? 0} messages
               </dd>
 
               <dt style={{ opacity: 0.55 }}>Tasks</dt>
               <dd style={{ margin: 0 }}>
-                {selectedAgent.kanban?.running ?? 0} running · {selectedAgent.kanban?.blocked ?? 0} blocked
+                {selectedAgent.kanban?.running ?? 0} running ·{" "}
+                {selectedAgent.kanban?.blocked ?? 0} blocked
               </dd>
 
               <dt style={{ opacity: 0.55 }}>Platforms</dt>
               <dd style={{ margin: 0 }}>
-                {selectedAgent.platforms?.connected ?? 0} connected · {selectedAgent.platforms?.error ?? 0} errors
+                {selectedAgent.platforms?.connected ?? 0} connected ·{" "}
+                {selectedAgent.platforms?.error ?? 0} errors
               </dd>
             </dl>
 
             {selectedStatusRows.length > 0 && (
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                <div style={{ fontSize: 12, fontWeight: 700, opacity: 0.75 }}>Operational details</div>
+                <div style={{ fontSize: 12, fontWeight: 700, opacity: 0.75 }}>
+                  Operational details
+                </div>
                 {selectedStatusRows.map((row) => (
                   <div
                     key={row.label}
@@ -503,21 +719,39 @@ function Office({ profile, visible, onNavigate, onSelectProfile }: OfficeProps):
                               : "rgba(255,255,255,0.06)",
                     }}
                   >
-                    <span style={{ fontSize: 12, opacity: 0.65 }}>{row.label}</span>
-                    <span style={{ fontSize: 12, fontWeight: 700, textAlign: "right" }}>{row.value}</span>
+                    <span style={{ fontSize: 12, opacity: 0.65 }}>
+                      {row.label}
+                    </span>
+                    <span
+                      style={{
+                        fontSize: 12,
+                        fontWeight: 700,
+                        textAlign: "right",
+                      }}
+                    >
+                      {row.value}
+                    </span>
                   </div>
                 ))}
               </div>
             )}
 
-            <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 8 }}>
+            <div
+              style={{ display: "grid", gridTemplateColumns: "1fr", gap: 8 }}
+            >
               {selectedActions.map((action) => (
                 <button
                   key={action.id}
                   type="button"
-                  disabled={Boolean(action.disabled) || actionBusy === action.id}
+                  disabled={
+                    Boolean(action.disabled) || actionBusy === action.id
+                  }
                   onClick={() => void handleAgentAction(action)}
-                  title={action.disabled ? "Navigation is not available in this view yet" : action.label}
+                  title={
+                    action.disabled
+                      ? "Navigation is not available in this view yet"
+                      : action.label
+                  }
                   style={{
                     display: "inline-flex",
                     alignItems: "center",
@@ -526,14 +760,23 @@ function Office({ profile, visible, onNavigate, onSelectProfile }: OfficeProps):
                     padding: "9px 12px",
                     borderRadius: 10,
                     border: "1px solid rgba(255,255,255,0.14)",
-                    background: action.kind === "chat" ? "rgba(59,130,246,0.22)" : "rgba(255,255,255,0.07)",
-                    color: action.disabled ? "rgba(255,255,255,0.35)" : "rgba(255,255,255,0.9)",
+                    background:
+                      action.kind === "chat"
+                        ? "rgba(59,130,246,0.22)"
+                        : "rgba(255,255,255,0.07)",
+                    color: action.disabled
+                      ? "rgba(255,255,255,0.35)"
+                      : "rgba(255,255,255,0.9)",
                     cursor: action.disabled ? "not-allowed" : "pointer",
                     fontSize: 13,
                     fontWeight: 650,
                   }}
                 >
-                  {action.kind === "chat" ? <MessageCircle size={14} /> : action.kind === "restartGateway" ? <Power size={14} /> : null}
+                  {action.kind === "chat" ? (
+                    <MessageCircle size={14} />
+                  ) : action.kind === "restartGateway" ? (
+                    <Power size={14} />
+                  ) : null}
                   {actionBusy === action.id ? "Working…" : action.label}
                 </button>
               ))}

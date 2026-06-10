@@ -71,6 +71,9 @@ describe("New IPC handlers from v0.8/v0.9 features", () => {
     "list-mcp-catalog",
     "install-mcp-catalog-entry",
     "discover-memory-providers",
+    "office-layout-get",
+    "office-layout-save",
+    "office-layout-reset",
   ];
 
   for (const ch of newChannels) {
