@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createElement, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ExternalLink,
   Move,
@@ -396,7 +396,14 @@ function Office({
                   <ExternalLink size={14} /> {t("office.openInBrowser")}
                 </a>
               </div>
-              <iframe title="Claw3D Studio runtime" src={runtimeUrl} style={{ flex: 1, width: "100%", border: 0 }} />
+              {runtimeUrl.startsWith("http://127.0.0.1:") || runtimeUrl.startsWith("http://localhost:")
+                ? createElement("webview", {
+                    title: "Claw3D Studio runtime",
+                    src: runtimeUrl,
+                    partition: "persist:claw3d-office",
+                    style: { flex: 1, width: "100%", height: "100%", border: 0 },
+                  })
+                : <iframe title="Claw3D Studio runtime" src={runtimeUrl} style={{ flex: 1, width: "100%", border: 0 }} />}
             </section>
           )}
         </main>

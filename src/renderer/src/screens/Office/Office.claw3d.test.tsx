@@ -116,11 +116,13 @@ describe("Office Claw3D launcher", () => {
     expect(screen.getByRole("link", { name: /open in browser/i })).toHaveAttribute("href", "https://office.example.invalid/session");
   });
 
-  it("falls back to the local Claw3D Office route for the embedded runtime URL", async () => {
+  it("falls back to the local Claw3D Office route in an Electron webview", async () => {
     renderOffice(status({ cloned: true, installed: true, running: true, port: 5199, remoteUrl: null }));
 
     const frame = await screen.findByTitle(/claw3d studio runtime/i);
+    expect(frame.tagName.toLowerCase()).toBe("webview");
     expect(frame).toHaveAttribute("src", "http://127.0.0.1:5199/office");
+    expect(frame).toHaveAttribute("partition", "persist:claw3d-office");
     expect(screen.getByRole("link", { name: /open in browser/i })).toHaveAttribute("href", "http://127.0.0.1:5199/office");
   });
 });
