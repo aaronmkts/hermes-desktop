@@ -317,65 +317,84 @@ export async function sshUninstallSkill(
   profile?: string,
 ): Promise<{ success: boolean; error?: string }> {
   const normalizedProfile = normalizeSshProfileName(profile);
+  let cliResult: { success: boolean; error?: string } | undefined;
+
   try {
     const args: string[] = [];
     pushProfileArg(args, normalizedProfile);
     args.push("skills", "uninstall", name, "--yes");
     const stdout = await sshExec(config, buildRemoteHermesCmd(args, " 2>&1"));
-    const result = classifySkillCliOutput(stdout ?? "");
-    if (result.success) return result;
+    cliResult = classifySkillCliOutput(stdout ?? "");
+    if (cliResult.success) return cliResult;
+  } catch (err) {
+    cliResult = { success: false, error: (err as Error).message };
+  }
 
-    // CLI didn't find it — try direct filesystem removal on the remote.
-    // Walk ~/.hermes/skills/*/ to find a directory whose SKILL.md frontmatter
-    // name or directory basename matches `name`.
-    await sshExec(
+  // CLI didn't find it or exited non-zero — try direct filesystem removal on
+  // the remote. Send the script via stdin (`python3 -`) instead of embedding a
+  // multiline Python program inside a shell-quoted `python3 -c '...'` string;
+  // skill/profile names and Python string literals may contain single quotes.
+  const payload = Buffer.from(
+    JSON.stringify({ name, profile: normalizedProfile || "" }),
+    "utf8",
+  ).toString("base64");
+  try {
+    const cleanupOut = await sshPython(
       config,
-      `python3 -c '
-import os, sys
-name = ${shellQuote(name)}
-profile = ${shellQuote(normalizedProfile || "")}
+      `
+import base64, json, os, shutil
+payload = json.loads(base64.b64decode(${JSON.stringify(payload)}).decode("utf-8"))
+name = payload.get("name", "")
+profile = payload.get("profile", "")
 home = os.path.expanduser("~")
 skills_dir = os.path.join(home, ".hermes", "profiles", profile, "skills") if profile and profile != "default" else os.path.join(home, ".hermes", "skills")
-if not os.path.isdir(skills_dir):
-    sys.exit(0)
-for cat in os.listdir(skills_dir):
-    cat_path = os.path.join(skills_dir, cat)
-    if not os.path.isdir(cat_path):
-        continue
-    for entry in os.listdir(cat_path):
-        entry_path = os.path.join(cat_path, entry)
-        if not os.path.isdir(entry_path):
+removed = False
+if os.path.isdir(skills_dir):
+    for cat in os.listdir(skills_dir):
+        cat_path = os.path.join(skills_dir, cat)
+        if not os.path.isdir(cat_path):
             continue
-        skill_file = os.path.join(entry_path, "SKILL.md")
-        if not os.path.isfile(skill_file):
-            continue
-        skill_name = entry
-        try:
-            with open(skill_file, "r", encoding="utf-8") as f:
-                lines = f.read(4000).splitlines()
-            in_fm = False
-            for line in lines:
-                if line.strip() == "---":
-                    if not in_fm:
-                        in_fm = True
-                        continue
-                    else:
+        for entry in os.listdir(cat_path):
+            entry_path = os.path.join(cat_path, entry)
+            if not os.path.isdir(entry_path):
+                continue
+            skill_file = os.path.join(entry_path, "SKILL.md")
+            if not os.path.isfile(skill_file):
+                continue
+            skill_name = entry
+            try:
+                with open(skill_file, "r", encoding="utf-8") as f:
+                    lines = f.read(4000).splitlines()
+                in_fm = False
+                for line in lines:
+                    if line.strip() == "---":
+                        if not in_fm:
+                            in_fm = True
+                            continue
                         break
-                if in_fm and line.strip().startswith("name:"):
-                    skill_name = line.split(":", 1)[1].strip().strip('"').strip("'")
-                    break
-        except Exception:
-            pass
-        if skill_name == name or entry == name:
-            import shutil
-            shutil.rmtree(entry_path)
-            sys.exit(0)
-' 2>&1`,
+                    if in_fm and line.strip().startswith("name:"):
+                        skill_name = line.split(":", 1)[1].strip().strip('"').strip("'")
+                        break
+            except Exception:
+                pass
+            if skill_name == name or entry == name:
+                shutil.rmtree(entry_path)
+                removed = True
+                break
+        if removed:
+            break
+print(json.dumps({"removed": removed}))
+`,
+      undefined,
+      30000,
     );
-    return { success: true };
+    const parsed = JSON.parse(cleanupOut.trim() || "{}");
+    if (parsed?.removed === true) return { success: true };
   } catch (err) {
     return { success: false, error: (err as Error).message };
   }
+
+  return cliResult ?? { success: false, error: "Uninstall failed." };
 }
 
 export async function sshSearchSkills(

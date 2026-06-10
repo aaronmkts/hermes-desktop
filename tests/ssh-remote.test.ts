@@ -1,6 +1,7 @@
 import { execFileSync } from "child_process";
 import {
   chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -26,6 +27,7 @@ import {
   sshListInstalledSkills,
   sshGetSkillContent,
   sshInstallSkill,
+  sshUninstallSkill,
   sshGetPlatformEnabled,
   sshReadGatewayPlatformStates,
   sshGetCredentialPool,
@@ -549,6 +551,51 @@ describe("ssh tools and skills visibility", () => {
 
       expect(readFileSync(join(remoteHome, "hermes-args.txt"), "utf-8")).toBe(
         "-p\nwork\nskills\ninstall\nremote-skill\n--yes\n",
+      );
+    }),
+  );
+
+
+  it(
+    "falls back to remote profile filesystem removal when skill uninstall CLI fails",
+    withFakeSshRemote(async (remoteHome) => {
+      const localBin = join(remoteHome, ".local", "bin");
+      mkdirSync(localBin, { recursive: true });
+      const hermes = join(localBin, "hermes");
+      writeFileSync(
+        hermes,
+        [
+          "#!/usr/bin/env bash",
+          'printf "%s\\n" "$@" > "$HOME/hermes-args.txt"',
+          'printf "Skill not installed by hub\\n" >&2',
+          "exit 1",
+          "",
+        ].join("\n"),
+      );
+      chmodSync(hermes, 0o755);
+
+      const skillDir = join(
+        remoteHome,
+        ".hermes",
+        "profiles",
+        "work",
+        "skills",
+        "productivity",
+        "quoted-skill",
+      );
+      mkdirSync(skillDir, { recursive: true });
+      writeFileSync(
+        join(skillDir, "SKILL.md"),
+        "---\nname: quote's skill\ndescription: remote\n---\n# Remote\n",
+      );
+
+      await expect(
+        sshUninstallSkill(sshConfig, "quote's skill", "work"),
+      ).resolves.toEqual({ success: true });
+
+      expect(existsSync(skillDir)).toBe(false);
+      expect(readFileSync(join(remoteHome, "hermes-args.txt"), "utf-8")).toBe(
+        "-p\nwork\nskills\nuninstall\nquote's skill\n--yes\n",
       );
     }),
   );
