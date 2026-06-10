@@ -4,6 +4,7 @@ import * as THREE from "three";
 import { SCALE } from "../core/constants";
 import { toWorld } from "../core/geometry";
 import type { FurniturePlacement, FurnitureType, Workstation } from "../layout";
+import type { OfficeLayoutItemId } from "../layoutModel";
 import deskUrl from "../assets/desk.glb?url";
 import executiveDeskUrl from "../assets/ceo_desk.glb?url";
 import chairUrl from "../assets/chairDesk.glb?url";
@@ -239,13 +240,58 @@ const EXEC_PLANT_LEFT_DX = -95;
 const EXEC_PLANT_RIGHT_DX = 150;
 const EXEC_PLANT_DY = 8;
 
-function ExecutiveWorkstation({
-  station,
+function SelectionMarker({
+  selected,
 }: {
-  station: Workstation;
+  selected?: boolean;
+}): React.JSX.Element | null {
+  if (!selected) return null;
+  return (
+    <mesh position={[0, 0.06, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+      <ringGeometry args={[0.35, 0.48, 32]} />
+      <meshBasicMaterial color="#38bdf8" transparent opacity={0.65} />
+    </mesh>
+  );
+}
+
+function SelectableGroup({
+  itemId,
+  selected,
+  onSelect,
+  children,
+}: {
+  itemId?: OfficeLayoutItemId;
+  selected?: boolean;
+  onSelect?: (id: OfficeLayoutItemId) => void;
+  children: React.ReactNode;
 }): React.JSX.Element {
   return (
-    <group>
+    <group
+      onClick={(event) => {
+        if (!itemId || !onSelect) return;
+        event.stopPropagation();
+        onSelect(itemId);
+      }}
+    >
+      {children}
+      <SelectionMarker selected={selected} />
+    </group>
+  );
+}
+
+function ExecutiveWorkstation({
+  station,
+  itemId,
+  selected,
+  onSelect,
+}: {
+  station: Workstation;
+  itemId?: OfficeLayoutItemId;
+  selected?: boolean;
+  onSelect?: (id: OfficeLayoutItemId) => void;
+}): React.JSX.Element {
+  return (
+    <SelectableGroup itemId={itemId} selected={selected} onSelect={onSelect}>
       <GlbItem
         type="executiveDesk"
         x={station.deskX}
@@ -279,27 +325,37 @@ function ExecutiveWorkstation({
         y={station.deskY + EXEC_PLANT_DY}
         facingDeg={0}
       />
-    </group>
+    </SelectableGroup>
   );
 }
 
 /** Render an arbitrary list of furniture placements (e.g. the rest room). */
 export function FurniturePieces({
   pieces,
+  selectedItemId,
+  onSelectItem,
 }: {
   pieces: FurniturePlacement[];
+  selectedItemId?: OfficeLayoutItemId | null;
+  onSelectItem?: (id: OfficeLayoutItemId) => void;
 }): React.JSX.Element {
   return (
     <>
       {pieces.map((piece) => (
-        <GlbItem
+        <SelectableGroup
           key={piece.id}
-          type={piece.type}
-          x={piece.x}
-          y={piece.y}
-          facingDeg={piece.facingDeg}
-          tint={piece.tint}
-        />
+          itemId={`furniture:${piece.id}`}
+          selected={selectedItemId === `furniture:${piece.id}`}
+          onSelect={onSelectItem}
+        >
+          <GlbItem
+            type={piece.type}
+            x={piece.x}
+            y={piece.y}
+            facingDeg={piece.facingDeg}
+            tint={piece.tint}
+          />
+        </SelectableGroup>
       ))}
     </>
   );
@@ -308,16 +364,31 @@ export function FurniturePieces({
 /** Render every workstation (a desk + its chair) in the work area. */
 export function Workstations({
   workstations,
+  selectedItemId,
+  onSelectItem,
 }: {
   workstations: Workstation[];
+  selectedItemId?: OfficeLayoutItemId | null;
+  onSelectItem?: (id: OfficeLayoutItemId) => void;
 }): React.JSX.Element {
   return (
     <>
       {workstations.map((w) =>
         w.isExecutive ? (
-          <ExecutiveWorkstation key={w.id} station={w} />
+          <ExecutiveWorkstation
+            key={w.id}
+            station={w}
+            itemId={`desk:${w.id}`}
+            selected={selectedItemId === `desk:${w.id}`}
+            onSelect={onSelectItem}
+          />
         ) : (
-          <group key={w.id}>
+          <SelectableGroup
+            key={w.id}
+            itemId={`desk:${w.id}`}
+            selected={selectedItemId === `desk:${w.id}`}
+            onSelect={onSelectItem}
+          >
             <GlbItem
               type="desk"
               x={w.deskX}
@@ -337,7 +408,7 @@ export function Workstations({
               y={w.chairY}
               facingDeg={w.chairFacingDeg}
             />
-          </group>
+          </SelectableGroup>
         ),
       )}
     </>
