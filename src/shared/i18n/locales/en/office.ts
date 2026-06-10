@@ -12,7 +12,7 @@ export default {
   installTitle: "Preparing Claw3D Studio",
   processLogs: "Process Logs",
   noLogs: "No logs yet. Start the services to see output.",
-  loadingClaw3d: "Loading Claw3D Studio...",
+  loadingClaw3d: "Claw3D Studio is ready",
   installClaw3d: "Install Claw3D",
   setupFailed: "Setup failed",
   startFailed: "Failed to start Claw3D Studio",

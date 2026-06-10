@@ -5,6 +5,8 @@ import {
   CLAW3D_REPO_URL,
   buildOfficeEnv,
   buildOfficeSettings,
+  getClaw3dWsUrl,
+  normalizeClaw3dWsUrl,
   writeOfficeFileIfChanged,
 } from "../src/main/claw3d";
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "fs";
@@ -74,6 +76,25 @@ describe("buildOfficeEnv (issue #256)", () => {
     expect(env).toContain("HERMES_API_KEY=secret-key-123");
   });
 
+  it("normalizes the previous Hermes One 18989 adapter URL to Claw3D's documented 18789 URL", () => {
+    expect(normalizeClaw3dWsUrl("ws://localhost:18989")).toBe("ws://localhost:18789");
+    expect(normalizeClaw3dWsUrl("ws://127.0.0.1:18989")).toBe("ws://localhost:18789");
+  });
+
+  it("defaults to the Claw3D-documented Hermes adapter URL and port", () => {
+    const env = buildOfficeEnv({
+      port: 3000,
+      url: getClaw3dWsUrl(),
+      apiKey: "",
+      model: "gpt-5.5",
+    });
+
+    expect(getClaw3dWsUrl()).toBe("ws://localhost:18789");
+    expect(env).toContain("NEXT_PUBLIC_GATEWAY_URL=ws://localhost:18789");
+    expect(env).toContain("CLAW3D_GATEWAY_URL=ws://localhost:18789");
+    expect(env).toContain("HERMES_ADAPTER_PORT=18789");
+  });
+
   it("derives the adapter port from the configured WebSocket URL", () => {
     const env = buildOfficeEnv({
       port: 5179,
@@ -105,8 +126,8 @@ describe("adapterPortFromWsUrl", () => {
   });
 
   it("falls back to a Windows-safe default when the URL has no usable port", () => {
-    expect(adapterPortFromWsUrl("ws://localhost")).toBe(18989);
-    expect(adapterPortFromWsUrl("not a url")).toBe(18989);
+    expect(adapterPortFromWsUrl("ws://localhost")).toBe(18789);
+    expect(adapterPortFromWsUrl("not a url")).toBe(18789);
   });
 });
 

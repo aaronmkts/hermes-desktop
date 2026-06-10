@@ -23,7 +23,11 @@ const PORT_FILE = join(HERMES_HOME, "claw3d-port");
 const WS_URL_FILE = join(HERMES_HOME, "claw3d-ws-url");
 const DEFAULT_PORT = 3000;
 const OLD_DEFAULT_WS_URL = "ws://localhost:18789";
-const DEFAULT_ADAPTER_PORT = 18989;
+const PREVIOUS_HERMES_ONE_WS_URLS = new Set([
+  "ws://localhost:18989",
+  "ws://127.0.0.1:18989",
+]);
+const DEFAULT_ADAPTER_PORT = 18789;
 const DEFAULT_WS_URL = `ws://localhost:${DEFAULT_ADAPTER_PORT}`;
 const CLAW3D_SETTINGS_DIR = join(homedir(), ".openclaw", "claw3d");
 
@@ -223,11 +227,17 @@ export function getClaw3dPort(): number {
   return getSavedPort();
 }
 
+export function normalizeClaw3dWsUrl(url: string): string {
+  const trimmed = url.trim();
+  if (!trimmed) return DEFAULT_WS_URL;
+  if (trimmed === OLD_DEFAULT_WS_URL) return DEFAULT_WS_URL;
+  if (PREVIOUS_HERMES_ONE_WS_URLS.has(trimmed)) return DEFAULT_WS_URL;
+  return trimmed;
+}
+
 function getSavedWsUrl(): string {
   try {
-    const url = readFileSync(WS_URL_FILE, "utf-8").trim();
-    if (url === OLD_DEFAULT_WS_URL) return DEFAULT_WS_URL;
-    return url || DEFAULT_WS_URL;
+    return normalizeClaw3dWsUrl(readFileSync(WS_URL_FILE, "utf-8"));
   } catch {
     return DEFAULT_WS_URL;
   }

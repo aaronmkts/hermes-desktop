@@ -38,6 +38,44 @@ interface OfficeProps {
 
 // The CEO assignment is desktop-local UI state (one agent at a time), persisted
 // across reloads like the app's other renderer preferences (theme, locale).
+const claw3dPrimaryButtonStyle: React.CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: 8,
+  minWidth: 148,
+  padding: "10px 18px",
+  borderRadius: 999,
+  border: "1px solid rgba(56, 189, 248, 0.55)",
+  background: "linear-gradient(135deg, rgba(14,165,233,0.96), rgba(37,99,235,0.96))",
+  color: "#ffffff",
+  cursor: "pointer",
+  fontWeight: 700,
+  fontSize: 14,
+  boxShadow: "0 16px 36px rgba(37,99,235,0.28)",
+};
+
+const claw3dSecondaryButtonStyle: React.CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: 6,
+  padding: "7px 11px",
+  borderRadius: 10,
+  border: "1px solid var(--border, rgba(148,163,184,0.26))",
+  background: "rgba(15,23,42,0.04)",
+  color: "var(--text-secondary, currentColor)",
+  cursor: "pointer",
+  fontWeight: 600,
+  fontSize: 13,
+};
+
+const claw3dDisabledButtonStyle: React.CSSProperties = {
+  opacity: 0.55,
+  cursor: "not-allowed",
+  boxShadow: "none",
+};
+
 const CEO_STORAGE_KEY = "hermes:office:ceo";
 
 function readStoredCeo(): string | null {
@@ -323,7 +361,7 @@ function Office({
             <span style={{ fontWeight: 600, fontSize: 15 }}>{t("office.title")}</span>
             <span style={{ fontSize: 12, opacity: 0.6 }}>{t("office.subtitle")}</span>
           </div>
-          <button type="button" onClick={() => void loadClaw3dStatus()} disabled={claw3dLoading} title={t("office.refresh")}>
+          <button type="button" onClick={() => void loadClaw3dStatus()} disabled={claw3dLoading} title={t("office.refresh")} style={{ ...claw3dSecondaryButtonStyle, ...(claw3dLoading ? claw3dDisabledButtonStyle : {}) }}>
             <RefreshCw size={14} /> {t("office.refresh")}
           </button>
         </header>
@@ -337,7 +375,7 @@ function Office({
               <p>{t("office.setupDesc1")}</p>
               <p>{t("office.setupDesc2")}</p>
               {claw3dError && <p role="alert">{claw3dError}</p>}
-              <button type="button" onClick={() => void handleClaw3dSetup()} disabled={claw3dBusy !== null}>
+              <button type="button" onClick={() => void handleClaw3dSetup()} disabled={claw3dBusy !== null} style={{ ...claw3dPrimaryButtonStyle, ...(claw3dBusy !== null ? claw3dDisabledButtonStyle : {}) }}>
                 {claw3dBusy === "setup" ? t("office.starting") : t("office.installClaw3d")}
               </button>
             </section>
@@ -346,7 +384,7 @@ function Office({
               <h2>{t("office.loadingClaw3d")}</h2>
               <p>{t("office.clickToStart")}</p>
               {claw3dError && <p role="alert">{claw3dError}</p>}
-              <button type="button" onClick={() => void handleClaw3dStart()} disabled={claw3dBusy !== null || claw3dStatus?.portInUse}>
+              <button type="button" onClick={() => void handleClaw3dStart()} disabled={claw3dBusy !== null || claw3dStatus?.portInUse} style={{ ...claw3dPrimaryButtonStyle, ...(claw3dBusy !== null || claw3dStatus?.portInUse ? claw3dDisabledButtonStyle : {}) }}>
                 {claw3dBusy === "start" ? t("office.starting") : "Start"}
               </button>
             </section>

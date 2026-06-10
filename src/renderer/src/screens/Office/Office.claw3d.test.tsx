@@ -17,7 +17,7 @@ vi.mock("../../components/useI18n", () => ({
         installClaw3d: "Install Claw3D",
         starting: "Starting...",
         clickToStart: "Click Start to open Claw3D Studio",
-        loadingClaw3d: "Loading Claw3D Studio...",
+        loadingClaw3d: "Claw3D Studio is ready",
         openInBrowser: "Open in Browser",
         startFailed: "Failed to start Claw3D Studio",
         setupFailed: "Claw3D setup failed",
@@ -88,7 +88,11 @@ describe("Office Claw3D launcher", () => {
 
     const start = await screen.findByRole("button", { name: /^start$/i });
     await waitFor(() => expect(window.hermesAPI.claw3dStatus).toHaveBeenCalledWith("default"));
+    expect(screen.getByRole("heading", { name: /claw3d studio is ready/i })).toBeInTheDocument();
     expect(screen.getByText(/click start to open claw3d studio/i)).toBeInTheDocument();
+    expect(start).toHaveStyle({ display: "inline-flex" });
+    expect(start).toHaveStyle({ cursor: "pointer" });
+    expect(start).toHaveStyle({ borderRadius: "999px" });
     fireEvent.click(start);
 
     await waitFor(() => expect(window.hermesAPI.claw3dStartAll).toHaveBeenCalledWith("default"));
