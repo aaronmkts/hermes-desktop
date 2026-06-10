@@ -26,6 +26,9 @@ export type OfficeAgentStatusExtension = {
   lastInteractionAt?: number | string | Date | null;
   recentSessionCount?: number | null;
   recentMessageCount?: number | null;
+  activeSessionId?: string | null;
+  description?: string | null;
+  personality?: string | null;
   kanban?: Partial<Record<"todo" | "ready" | "running" | "blocked" | "doneRecent", number>> | null;
   platforms?: Partial<Record<"connected" | "error" | "configured", number>> | null;
 };
@@ -81,6 +84,53 @@ function severityFor(agent: AgentLike, fallback?: OfficeAgentStatusRow["severity
   if (agent.status === "error" || agent.state === "error") return "error";
   if (agent.state === "waiting") return "warning";
   return fallback;
+}
+
+function kanbanCount(agent: AgentLike, key: "todo" | "ready" | "running" | "blocked" | "doneRecent"): number {
+  const value = agent.kanban?.[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+export function buildOfficeAgentDetailRows(agent: AgentLike, now = Date.now()): OfficeAgentStatusRow[] {
+  const todo = kanbanCount(agent, "todo");
+  const ready = kanbanCount(agent, "ready");
+  const running = kanbanCount(agent, "running");
+  const blocked = kanbanCount(agent, "blocked");
+  const doneRecent = kanbanCount(agent, "doneRecent");
+  const rows: OfficeAgentStatusRow[] = [
+    {
+      label: "Workload",
+      value: `${todo} todo · ${ready} ready · ${running} running · ${blocked} blocked · ${doneRecent} done today`,
+    },
+    {
+      label: "Assignment context",
+      value: `Profile-scoped assigned work for ${agent.name} (${agent.id})`,
+    },
+  ];
+
+  if (blocked > 0) {
+    rows.splice(1, 0, {
+      label: "Blocked work",
+      value: `${blocked} blocked ${blocked === 1 ? "task needs" : "tasks need"} operator attention`,
+      severity: "warning",
+    });
+  }
+
+  if (agent.activeSessionId) {
+    rows.push({ label: "Active session", value: agent.activeSessionId });
+  }
+  if (agent.lastInteractionAt) {
+    const formatted = formatLastInteraction(agent.lastInteractionAt, now);
+    if (formatted) rows.push({ label: "Last interaction", value: formatted });
+  }
+  if (agent.description) {
+    rows.push({ label: "Description", value: agent.description });
+  }
+  if (agent.personality) {
+    rows.push({ label: "Personality", value: agent.personality });
+  }
+
+  return rows;
 }
 
 export function buildOfficeAgentStatusRows(agent: AgentLike, now = Date.now()): OfficeAgentStatusRow[] {
