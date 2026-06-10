@@ -516,34 +516,44 @@ function isAdapterRunning(): boolean {
   return false;
 }
 
-// Probe an HTTP endpoint with a short timeout and return its status.
-function probeHttpStatus(url: string, timeoutMs = 1500): Promise<number | null> {
-  return new Promise((resolve) => {
-    const req = http.request(
-      url,
-      { method: "GET", timeout: timeoutMs },
-      (res) => {
-        res.resume();
-        resolve(res.statusCode ?? null);
-      },
-    );
-    req.on("error", () => resolve(null));
-    req.on("timeout", () => {
-      req.destroy();
-      resolve(null);
-    });
-    req.end();
-  });
-}
-
+// Probe an HTTP endpoint with a short timeout and capture enough body text to identify Claw3D.
 export function isClaw3dOfficeStatusReady(statusCode: number | null): boolean {
   if (statusCode === null) return false;
   if (statusCode === 404) return false;
   return statusCode < 500;
 }
 
+export function isClaw3dOfficeHtml(body: string): boolean {
+  const html = body.toLowerCase();
+  return html.includes("claw3d") || html.includes("/_next/static/");
+}
+
+function probeHttpBody(url: string, timeoutMs = 1500, maxBytes = 64_000): Promise<{ statusCode: number | null; body: string }> {
+  return new Promise((resolve) => {
+    const req = http.request(
+      url,
+      { method: "GET", timeout: timeoutMs },
+      (res) => {
+        let body = "";
+        res.setEncoding("utf8");
+        res.on("data", (chunk: string) => {
+          if (body.length < maxBytes) body += chunk.slice(0, maxBytes - body.length);
+        });
+        res.on("end", () => resolve({ statusCode: res.statusCode ?? null, body }));
+      },
+    );
+    req.on("error", () => resolve({ statusCode: null, body: "" }));
+    req.on("timeout", () => {
+      req.destroy();
+      resolve({ statusCode: null, body: "" });
+    });
+    req.end();
+  });
+}
+
 async function probeClaw3dOffice(url: string, timeoutMs = 1500): Promise<boolean> {
-  return isClaw3dOfficeStatusReady(await probeHttpStatus(url, timeoutMs));
+  const result = await probeHttpBody(url, timeoutMs);
+  return isClaw3dOfficeStatusReady(result.statusCode) && isClaw3dOfficeHtml(result.body);
 }
 
 export interface Claw3dReadyProbeTargets {

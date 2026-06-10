@@ -10,6 +10,8 @@ import {
   session,
 } from "electron";
 import { join, extname } from "path";
+import { existsSync, readFileSync } from "fs";
+import { execFile } from "child_process";
 import { readdir, readFile, stat } from "fs/promises";
 import { electronApp, optimizer, is } from "@electron-toolkit/utils";
 import type { AppUpdater } from "electron-updater";
@@ -321,13 +323,75 @@ process.on("unhandledRejection", (reason) => {
 let mainWindow: BrowserWindow | null = null;
 let currentChatAbort: (() => void) | null = null;
 
+function isLoopbackHttpUrl(rawUrl: string): boolean {
+  try {
+    const parsed = new URL(rawUrl);
+    return (
+      (parsed.protocol === "http:" || parsed.protocol === "https:") &&
+      ["localhost", "127.0.0.1", "::1"].includes(parsed.hostname)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isLinuxWslRuntime(): boolean {
+  if (process.platform !== "linux") return false;
+  try {
+    const version = readFileSync("/proc/version", "utf8").toLowerCase();
+    if (version.includes("microsoft") || version.includes("wsl")) return true;
+  } catch {
+    /* fall through */
+  }
+  return existsSync("/mnt/c/Windows/System32/cmd.exe");
+}
+
+function openLoopbackUrlWithWindowsHost(rawUrl: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const candidates = ["cmd.exe", "/mnt/c/Windows/System32/cmd.exe"];
+    const tryCandidate = (index: number): void => {
+      const command = candidates[index];
+      if (!command) {
+        resolve(false);
+        return;
+      }
+      execFile(
+        command,
+        ["/c", "start", "", rawUrl],
+        { windowsHide: true, timeout: 5000 },
+        (err) => {
+          if (!err) {
+            resolve(true);
+            return;
+          }
+          tryCandidate(index + 1);
+        },
+      );
+    };
+    tryCandidate(0);
+  });
+}
+
 function openExternalUrl(rawUrl: unknown): void {
   if (!isAllowedExternalUrl(rawUrl)) {
     console.warn("[SECURITY] Blocked unsafe external URL");
     return;
   }
 
-  shell.openExternal(rawUrl).catch((err) => {
+  const url = String(rawUrl);
+  if (isLinuxWslRuntime() && isLoopbackHttpUrl(url)) {
+    openLoopbackUrlWithWindowsHost(url)
+      .then((opened) => {
+        if (opened) return;
+        return shell.openExternal(url);
+      })
+      .catch((err) => {
+        console.error("[SECURITY] Failed to open external URL:", err);
+      });
+    return;
+  }
+
+  shell.openExternal(url).catch((err) => {
     console.error("[SECURITY] Failed to open external URL:", err);
   });
 }

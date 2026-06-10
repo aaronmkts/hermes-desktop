@@ -6,6 +6,7 @@ import {
   chooseClaw3dPort,
   hasClaw3dOfficeRoute,
   isClaw3dOfficeStatusReady,
+  isClaw3dOfficeHtml,
   shouldRefreshClaw3dCheckout,
   patchNextConfigForEmbedding,
   isWindowsCommandScript,
@@ -175,5 +176,12 @@ describe("Claw3D command resolution", () => {
     expect(chooseClaw3dPort(3000, (port) => port !== 3000)).toBe(3001);
     expect(chooseClaw3dPort(3000, (port) => port !== 3000 && port !== 3001)).toBe(3002);
     expect(chooseClaw3dPort(4123, (port) => port !== 3000)).toBe(4123);
+  });
+
+  it("requires the /office response to look like the Claw3D/Next app", () => {
+    expect(isClaw3dOfficeHtml('<html><head><title>Claw3D</title></head></html>')).toBe(true);
+    expect(isClaw3dOfficeHtml('<script src="/_next/static/chunks/app.js"></script>')).toBe(true);
+    expect(isClaw3dOfficeHtml('<html><body>Ollama is running</body></html>')).toBe(false);
+    expect(isClaw3dOfficeHtml('<html><body>Some static site</body></html>')).toBe(false);
   });
 });

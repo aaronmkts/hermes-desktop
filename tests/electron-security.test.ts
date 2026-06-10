@@ -40,11 +40,22 @@ describe("Electron main process hardening", () => {
   });
 
   it("routes shell.openExternal through the allowlist helper", () => {
-    const directShellOpens = mainSrc.match(/shell\.openExternal\(/g) ?? [];
-    expect(directShellOpens).toHaveLength(1);
-    expect(mainSrc).toContain(
-      "function openExternalUrl(rawUrl: unknown): void",
-    );
+    const helperStart = mainSrc.indexOf("function openExternalUrl(rawUrl: unknown): void");
+    const windowStart = mainSrc.indexOf("function createWindow(): void");
+    expect(helperStart).toBeGreaterThanOrEqual(0);
+    expect(windowStart).toBeGreaterThan(helperStart);
+    const helperBody = mainSrc.slice(helperStart, windowStart);
+    const directShellOpens = helperBody.match(/shell\.openExternal\(/g) ?? [];
+    expect(directShellOpens.length).toBeGreaterThanOrEqual(1);
+    expect(mainSrc).toContain('ipcMain.handle("open-external"');
+    expect(mainSrc).toContain("openExternalUrl(url);");
+  });
+
+  it("routes loopback external URLs through the Windows host browser under WSL before xdg-open", () => {
+    expect(mainSrc).toContain("function isLinuxWslRuntime(): boolean");
+    expect(mainSrc).toContain("function isLoopbackHttpUrl(rawUrl: string): boolean");
+    expect(mainSrc).toContain("openLoopbackUrlWithWindowsHost(url)");
+    expect(mainSrc).toContain('["/c", "start", "", rawUrl]');
   });
 
   it("keeps the sandboxed main preload free of external runtime imports", () => {
