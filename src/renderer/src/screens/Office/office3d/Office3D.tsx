@@ -13,6 +13,8 @@ import * as THREE from "three";
 import { AgentModel } from "./objects/agents";
 import { RIGGED_EMPLOYEE_URL, RIGGED_MAN_URL } from "./objects/RiggedCharacter";
 import { Workstations, FurniturePieces } from "./objects/furniture";
+import { KanbanBoard3D } from "./objects/KanbanBoard3D";
+import { buildOfficeKanbanBoard } from "./kanbanBoard";
 import {
   REST_SEATS,
   INTERIOR_WALLS,
@@ -441,6 +443,10 @@ export default function Office3D({
   );
 
   const agentIds = useMemo(() => agents.map((a) => a.id), [agents]);
+  const board = useMemo(
+    () => buildOfficeKanbanBoard(agents, { maxCardsPerColumn: 6 }),
+    [agents],
+  );
   const renderState = useMemo(
     () =>
       getOffice3DLayoutRenderState({
@@ -551,6 +557,7 @@ export default function Office3D({
       />
       <Room palette={palette} />
       <InteriorWalls palette={palette} />
+      <KanbanBoard3D board={board} />
       <Suspense fallback={null}>
         <Workstations
           workstations={workstations}
