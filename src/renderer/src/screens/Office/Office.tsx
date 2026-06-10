@@ -343,7 +343,7 @@ function Office({
   if (supportsClaw3d) {
     const installed = Boolean(claw3dStatus?.cloned && claw3dStatus?.installed);
     const running = Boolean(claw3dStatus?.running);
-    const runtimeUrl = claw3dStatus?.remoteUrl || (claw3dStatus?.port ? `http://127.0.0.1:${claw3dStatus.port}` : "");
+    const runtimeUrl = claw3dStatus?.remoteUrl || (claw3dStatus?.port ? `http://127.0.0.1:${claw3dStatus.port}/office` : "");
 
     return (
       <div style={{ display: "flex", flexDirection: "column", height: "100%", width: "100%" }}>
