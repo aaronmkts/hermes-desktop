@@ -12,6 +12,7 @@ import {
   Sparkles,
 } from "../../assets/icons";
 import { useI18n } from "../../components/useI18n";
+import { isValidKanbanTransition } from "./kanbanActions";
 
 interface KanbanProps {
   profile?: string;
@@ -461,6 +462,30 @@ function Kanban({ profile, visible }: KanbanProps): React.JSX.Element {
     loadAll(true);
   }
 
+  async function handleAssign(
+    task: KanbanTask,
+    assignee: string | null,
+  ): Promise<void> {
+    if (isHqActive) return;
+    setActionBusy(task.id);
+    const res = await window.hermesAPI.kanbanAssignTask(
+      task.id,
+      assignee,
+      profile,
+    );
+    setActionBusy(null);
+    if (!res.success) {
+      setError(res.error || t("kanban.errMoveTask"));
+      return;
+    }
+    loadAll(true);
+    if (detailTaskId === task.id) {
+      window.hermesAPI.kanbanGetTask(task.id, profile).then((detailRes) => {
+        if (detailRes.success && detailRes.data) setDetail(detailRes.data);
+      });
+    }
+  }
+
   async function handleSpecify(task: KanbanTask): Promise<void> {
     setActionBusy(task.id);
     const res = await window.hermesAPI.kanbanSpecifyTask(task.id, profile);
@@ -472,20 +497,8 @@ function Kanban({ profile, visible }: KanbanProps): React.JSX.Element {
     loadAll(true);
   }
 
-  function isValidDragTransition(from: string, to: string): boolean {
-    if (from === to) return false;
-    if (to === "done") return true;
-    if (
-      to === "blocked" &&
-      (from === "todo" || from === "ready" || from === "running")
-    )
-      return true;
-    if (to === "ready" && from === "blocked") return true;
-    return false;
-  }
-
   async function handleDrop(task: KanbanTask, target: string): Promise<void> {
-    if (!isValidDragTransition(task.status, target)) return;
+    if (!isValidKanbanTransition(task.status, target)) return;
     if (target === "done") {
       if (!window.confirm(t("kanban.confirmMarkDone", { title: task.title })))
         return;
@@ -674,7 +687,7 @@ function Kanban({ profile, visible }: KanbanProps): React.JSX.Element {
             : null;
           const canDropHere =
             !!draggingTask &&
-            isValidDragTransition(draggingTask.status, col.key);
+            isValidKanbanTransition(draggingTask.status, col.key);
           return (
             <div
               key={col.key}
@@ -1103,6 +1116,31 @@ function Kanban({ profile, visible }: KanbanProps): React.JSX.Element {
                       {detail.task.id}
                     </span>
                   </div>
+                  {!isHqActive && (
+                    <div className="kanban-detail-section">
+                      <label>Assignment</label>
+                      <div className="kanban-card-actions">
+                        {profile && detail.task.assignee !== profile && (
+                          <button
+                            className="btn-secondary"
+                            onClick={() => handleAssign(detail.task, profile)}
+                            disabled={actionBusy === detail.task.id}
+                          >
+                            Assign to {profile}
+                          </button>
+                        )}
+                        {detail.task.assignee && (
+                          <button
+                            className="btn-ghost"
+                            onClick={() => handleAssign(detail.task, null)}
+                            disabled={actionBusy === detail.task.id}
+                          >
+                            Unassign
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
                   {detail.task.body && (
                     <div className="kanban-detail-section">
                       <label>{t("kanban.detailBody")}</label>
