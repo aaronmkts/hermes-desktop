@@ -12,7 +12,11 @@ import {
   Sparkles,
 } from "../../assets/icons";
 import { useI18n } from "../../components/useI18n";
-import { isValidKanbanTransition } from "./kanbanActions";
+import {
+  buildKanbanTaskActions,
+  isValidKanbanTransition,
+  type KanbanTaskActionDescriptor,
+} from "./kanbanActions";
 
 interface KanbanProps {
   profile?: string;
@@ -506,6 +510,12 @@ function Kanban({ profile, visible }: KanbanProps): React.JSX.Element {
     await handleMove(task, target);
   }
 
+  async function handleCardComplete(task: KanbanTask): Promise<void> {
+    if (!window.confirm(t("kanban.confirmMarkDone", { title: task.title })))
+      return;
+    await handleMove(task, "done");
+  }
+
   async function handleArchive(task: KanbanTask): Promise<void> {
     if (!window.confirm(t("kanban.confirmArchive", { title: task.title })))
       return;
@@ -771,92 +781,121 @@ function Kanban({ profile, visible }: KanbanProps): React.JSX.Element {
                             read-only
                           </span>
                         )}
-                        {!isHqActive && task.status === "triage" && (
-                          <button
-                            className="btn-ghost kanban-card-action"
-                            data-tooltip={t("kanban.cardSpecify")}
-                            title={t("kanban.cardSpecify")}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleSpecify(task);
-                            }}
-                            disabled={actionBusy === task.id}
-                          >
-                            <Sparkles size={14} />
-                          </button>
-                        )}
-                        {!isHqActive && task.status === "ready" && (
-                          <button
-                            className="btn-ghost kanban-card-action"
-                            data-tooltip={t("kanban.cardMarkDone")}
-                            title={t("kanban.cardMarkDone")}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleMove(task, "done");
-                            }}
-                            disabled={actionBusy === task.id}
-                          >
-                            <Check size={14} />
-                          </button>
-                        )}
-                        {!isHqActive && task.status === "running" && (
-                          <button
-                            className="btn-ghost kanban-card-action"
-                            data-tooltip={t("kanban.cardReclaim")}
-                            title={t("kanban.cardReclaim")}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleReclaim(task);
-                            }}
-                            disabled={actionBusy === task.id}
-                          >
-                            <Alert size={14} />
-                          </button>
-                        )}
-                        {!isHqActive && task.status === "blocked" && (
-                          <button
-                            className="btn-ghost kanban-card-action"
-                            data-tooltip={t("kanban.cardUnblock")}
-                            title={t("kanban.cardUnblock")}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleMove(task, "ready");
-                            }}
-                            disabled={actionBusy === task.id}
-                          >
-                            <RotateCcw size={14} />
-                          </button>
-                        )}
                         {!isHqActive &&
-                          (task.status === "todo" ||
-                            task.status === "ready") && (
-                            <button
-                              className="btn-ghost kanban-card-action"
-                              data-tooltip={t("kanban.cardBlock")}
-                              title={t("kanban.cardBlock")}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleMove(task, "blocked");
-                              }}
-                              disabled={actionBusy === task.id}
-                            >
-                              <Ban size={14} />
-                            </button>
+                          buildKanbanTaskActions(task, { isHqActive }).map(
+                            (action: KanbanTaskActionDescriptor) => {
+                              if (action.kind !== "mutation") return null;
+                              if (action.id === "specify")
+                                return (
+                                  <button
+                                    key={action.id}
+                                    className="btn-ghost kanban-card-action"
+                                    data-tooltip={t("kanban.cardSpecify")}
+                                    title={t("kanban.cardSpecify")}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleSpecify(task);
+                                    }}
+                                    disabled={
+                                      actionBusy === task.id || action.disabled
+                                    }
+                                  >
+                                    <Sparkles size={14} />
+                                  </button>
+                                );
+                              if (action.id === "complete")
+                                return (
+                                  <button
+                                    key={action.id}
+                                    className="btn-ghost kanban-card-action"
+                                    data-tooltip={t("kanban.cardMarkDone")}
+                                    title={t("kanban.cardMarkDone")}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleCardComplete(task);
+                                    }}
+                                    disabled={
+                                      actionBusy === task.id || action.disabled
+                                    }
+                                  >
+                                    <Check size={14} />
+                                  </button>
+                                );
+                              if (action.id === "reclaim")
+                                return (
+                                  <button
+                                    key={action.id}
+                                    className="btn-ghost kanban-card-action"
+                                    data-tooltip={t("kanban.cardReclaim")}
+                                    title={t("kanban.cardReclaim")}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleReclaim(task);
+                                    }}
+                                    disabled={
+                                      actionBusy === task.id || action.disabled
+                                    }
+                                  >
+                                    <Alert size={14} />
+                                  </button>
+                                );
+                              if (action.id === "unblock")
+                                return (
+                                  <button
+                                    key={action.id}
+                                    className="btn-ghost kanban-card-action"
+                                    data-tooltip={t("kanban.cardUnblock")}
+                                    title={t("kanban.cardUnblock")}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleMove(task, "ready");
+                                    }}
+                                    disabled={
+                                      actionBusy === task.id || action.disabled
+                                    }
+                                  >
+                                    <RotateCcw size={14} />
+                                  </button>
+                                );
+                              if (action.id === "block")
+                                return (
+                                  <button
+                                    key={action.id}
+                                    className="btn-ghost kanban-card-action"
+                                    data-tooltip={t("kanban.cardBlock")}
+                                    title={t("kanban.cardBlock")}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleMove(task, "blocked");
+                                    }}
+                                    disabled={
+                                      actionBusy === task.id || action.disabled
+                                    }
+                                  >
+                                    <Ban size={14} />
+                                  </button>
+                                );
+                              if (action.id === "archive")
+                                return (
+                                  <button
+                                    key={action.id}
+                                    className="btn-ghost kanban-card-action kanban-card-action-danger"
+                                    data-tooltip={t("kanban.cardArchive")}
+                                    title={t("kanban.cardArchive")}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleArchive(task);
+                                    }}
+                                    disabled={
+                                      actionBusy === task.id || action.disabled
+                                    }
+                                  >
+                                    <Trash size={12} />
+                                  </button>
+                                );
+                              return null;
+                            },
                           )}
-                        {!isHqActive && (
-                          <button
-                            className="btn-ghost kanban-card-action kanban-card-action-danger"
-                            data-tooltip={t("kanban.cardArchive")}
-                            title={t("kanban.cardArchive")}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleArchive(task);
-                            }}
-                            disabled={actionBusy === task.id}
-                          >
-                            <Trash size={12} />
-                          </button>
-                        )}
                       </div>
                     </div>
                   );
