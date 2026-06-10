@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   adapterPortFromWsUrl,
+  CLAW3D_INSTALL_DIR,
+  CLAW3D_REPO_URL,
   buildOfficeEnv,
   buildOfficeSettings,
   writeOfficeFileIfChanged,
@@ -9,7 +11,18 @@ import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 
-// Hermes Desktop writes the hermes-office `.env`. It used to hardcode
+describe("Claw3D installer identity", () => {
+  it("uses the modern upstream Claw3D repository", () => {
+    expect(CLAW3D_REPO_URL).toBe("https://github.com/iamlukethedev/claw3d");
+  });
+
+  it("installs into a claw3d directory rather than hermes-office", () => {
+    expect(CLAW3D_INSTALL_DIR).toMatch(/(?:^|[\\/])claw3d$/);
+    expect(CLAW3D_INSTALL_DIR).not.toMatch(/hermes-office$/);
+  });
+});
+
+// Hermes Desktop writes the Claw3D `.env`. It used to hardcode
 // `HERMES_MODEL=hermes`, so Office ignored the user's configured model
 // (issue #256). The model is now passed through.
 describe("buildOfficeEnv (issue #256)", () => {
@@ -21,6 +34,7 @@ describe("buildOfficeEnv (issue #256)", () => {
       model: "grok-4.3",
     });
     expect(env).toContain("HERMES_MODEL=grok-4.3");
+    expect(env).toContain("HERMES_AGENT_NAME=ORION");
     expect(env).not.toContain("HERMES_MODEL=hermes");
   });
 
@@ -40,10 +54,12 @@ describe("buildOfficeEnv (issue #256)", () => {
       url: "ws://gw.test",
       apiKey: "",
       model: "m",
+      apiUrl: "http://127.0.0.1:18642",
     });
     expect(env).toContain("PORT=1234");
     expect(env).toContain("NEXT_PUBLIC_GATEWAY_URL=ws://gw.test");
     expect(env).toContain("CLAW3D_GATEWAY_URL=ws://gw.test");
+    expect(env).toContain("HERMES_API_URL=http://127.0.0.1:18642");
   });
 
   it("threads the gateway API key into CLAW3D_GATEWAY_TOKEN and HERMES_API_KEY (#297)", () => {
@@ -66,6 +82,7 @@ describe("buildOfficeEnv (issue #256)", () => {
       model: "hermes",
     });
     expect(env).toContain("HERMES_ADAPTER_PORT=19777");
+    expect(env).toContain("CLAW3D_GATEWAY_ADAPTER_TYPE=hermes");
     expect(env).not.toContain("HERMES_ADAPTER_PORT=18789");
   });
 

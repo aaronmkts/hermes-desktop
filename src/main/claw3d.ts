@@ -12,10 +12,11 @@ import { createConnection } from "net";
 import { getEnhancedPath, HERMES_HOME } from "./installer";
 import { stripAnsi, safeWriteFile } from "./utils";
 import { getApiServerKey, getConnectionConfig, getModelConfig } from "./config";
+import { getApiUrl } from "./hermes";
 import http from "http";
 
-const HERMES_OFFICE_REPO = "https://github.com/fathah/hermes-office";
-const HERMES_OFFICE_DIR = join(HERMES_HOME, "hermes-office");
+export const CLAW3D_REPO_URL = "https://github.com/iamlukethedev/claw3d";
+export const CLAW3D_INSTALL_DIR = join(HERMES_HOME, "claw3d");
 const DEV_PID_FILE = join(HERMES_HOME, "claw3d-dev.pid");
 const ADAPTER_PID_FILE = join(HERMES_HOME, "claw3d-adapter.pid");
 const PORT_FILE = join(HERMES_HOME, "claw3d-port");
@@ -272,7 +273,7 @@ function resolveOfficeModel(): string {
 }
 
 /**
- * Build the `.env` Hermes One writes into the hermes-office directory.
+ * Build the `.env` Hermes One writes into the Claw3D directory.
  * Exported so the contents (notably `HERMES_MODEL`, issue #256) can be
  * unit tested without a live Office install.
  */
@@ -282,8 +283,10 @@ export function buildOfficeEnv(opts: {
   apiKey: string;
   model: string;
   adapterPort?: number;
+  apiUrl?: string;
 }): string {
   const adapterPort = opts.adapterPort ?? adapterPortFromWsUrl(opts.url);
+  const apiUrl = opts.apiUrl ?? getApiUrl();
   return [
     "# Auto-configured by Hermes One",
     `PORT=${opts.port}`,
@@ -293,9 +296,10 @@ export function buildOfficeEnv(opts: {
     `CLAW3D_GATEWAY_TOKEN=${opts.apiKey}`,
     `CLAW3D_GATEWAY_ADAPTER_TYPE=hermes`,
     `HERMES_API_KEY=${opts.apiKey}`,
+    `HERMES_API_URL=${apiUrl}`,
     `HERMES_ADAPTER_PORT=${adapterPort}`,
     `HERMES_MODEL=${opts.model || "hermes"}`,
-    `HERMES_AGENT_NAME=Hermes`,
+    `HERMES_AGENT_NAME=ORION`,
     "",
   ].join("\n");
 }
@@ -383,8 +387,8 @@ function writeClaw3dSettings(wsUrl?: string): void {
 
   // Write .env in claw3d directory
   try {
-    if (existsSync(HERMES_OFFICE_DIR)) {
-      const envPath = join(HERMES_OFFICE_DIR, ".env");
+    if (existsSync(CLAW3D_INSTALL_DIR)) {
+      const envPath = join(CLAW3D_INSTALL_DIR, ".env");
       writeOfficeFileIfChanged(
         envPath,
         buildOfficeEnv({
@@ -438,7 +442,7 @@ export interface Claw3dStatus {
   portInUse: boolean;
   wsUrl: string;
   error: string; // last error from either process
-  // Populated in SSH tunnel mode when a Claw3D / hermes-office service is
+  // Populated in SSH tunnel mode when a Claw3D service is
   // running on the remote host. Renderer should prefer this over launching
   // a local dev server. Null/undefined when not in SSH mode or when the
   // remote service is unreachable.
@@ -502,7 +506,7 @@ function isAdapterRunning(): boolean {
 
 // Probe an HTTP endpoint with a short timeout. Returns true if any response
 // arrives (we don't care about the status code — even a 404 confirms a
-// listener). Used to detect remote Claw3D / hermes-office without dragging
+// listener). Used to detect remote Claw3D without dragging
 // in the SSH tunnel machinery.
 function probeHttp(url: string, timeoutMs = 1500): Promise<boolean> {
   return new Promise((resolve) => {
@@ -553,8 +557,8 @@ export async function waitForClaw3dReady(
 }
 
 export async function getClaw3dStatus(): Promise<Claw3dStatus> {
-  const cloned = existsSync(join(HERMES_OFFICE_DIR, "package.json"));
-  const installed = existsSync(join(HERMES_OFFICE_DIR, "node_modules"));
+  const cloned = existsSync(join(CLAW3D_INSTALL_DIR, "package.json"));
+  const installed = existsSync(join(CLAW3D_INSTALL_DIR, "node_modules"));
   if (installed) {
     writeClaw3dSettings();
   }
@@ -565,7 +569,7 @@ export async function getClaw3dStatus(): Promise<Claw3dStatus> {
   const adapterUp = isAdapterRunning();
   const error = devServerError || adapterError;
 
-  // SSH tunnel mode: probe the remote host for a Claw3D / hermes-office
+  // SSH tunnel mode: probe the remote host for a Claw3D
   // service. The official systemd unit binds Next.js to :3000 by default,
   // so we try the SSH host at the saved Claw3D port. When reachable, the
   // renderer can point its webview at it instead of asking the user to
@@ -700,15 +704,15 @@ export async function setupClaw3d(
   const git = resolveCommand("git", env.PATH);
 
   // Step 1: Clone (or pull if already cloned)
-  const cloned = existsSync(join(HERMES_OFFICE_DIR, "package.json"));
+  const cloned = existsSync(join(CLAW3D_INSTALL_DIR, "package.json"));
 
   if (!cloned) {
     emit(1, "Cloning Claw3D repository...", "Cloning from GitHub...\n");
     await new Promise<void>((resolve, reject) => {
       const gitClone = createCommandInvocation(git, [
         "clone",
-        HERMES_OFFICE_REPO,
-        HERMES_OFFICE_DIR,
+        CLAW3D_REPO_URL,
+        CLAW3D_INSTALL_DIR,
       ]);
       const proc = spawn(gitClone.command, gitClone.args, {
         cwd: homedir(),
@@ -746,7 +750,7 @@ export async function setupClaw3d(
     await new Promise<void>((resolve) => {
       const gitPull = createCommandInvocation(git, ["pull", "--ff-only"]);
       const proc = spawn(gitPull.command, gitPull.args, {
-        cwd: HERMES_OFFICE_DIR,
+        cwd: CLAW3D_INSTALL_DIR,
         env,
         stdio: ["ignore", "pipe", "pipe"],
         windowsHide: true,
@@ -774,7 +778,7 @@ export async function setupClaw3d(
 
   await new Promise<void>((resolve, reject) => {
     const proc = spawn(npm.command, npm.args, {
-      cwd: HERMES_OFFICE_DIR,
+      cwd: CLAW3D_INSTALL_DIR,
       env,
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
@@ -833,7 +837,7 @@ function killProcessTree(proc: ChildProcess): void {
 
 export function startDevServer(): boolean {
   if (isDevServerRunning()) return true;
-  if (!existsSync(join(HERMES_OFFICE_DIR, "node_modules"))) return false;
+  if (!existsSync(join(CLAW3D_INSTALL_DIR, "node_modules"))) return false;
 
   devServerError = "";
   devServerLogs = "";
@@ -844,12 +848,15 @@ export function startDevServer(): boolean {
     HOME: homedir(),
     TERM: "dumb",
     HERMES_API_KEY: getApiServerKey(),
+    HERMES_API_URL: getApiUrl(),
+    HERMES_AGENT_NAME: "ORION",
+    CLAW3D_GATEWAY_ADAPTER_TYPE: "hermes",
     PORT: String(port),
   };
   const node = resolveCommand("node", env.PATH);
   const devScript = createClaw3dScriptInvocation("dev", node.command);
   const proc = spawn(devScript.command, devScript.args, {
-    cwd: HERMES_OFFICE_DIR,
+    cwd: CLAW3D_INSTALL_DIR,
     env,
     stdio: ["ignore", "pipe", "pipe"],
     detached: true,
@@ -914,7 +921,7 @@ export function stopDevServer(): void {
 
 export function startAdapter(): boolean {
   if (isAdapterRunning()) return true;
-  if (!existsSync(join(HERMES_OFFICE_DIR, "node_modules"))) return false;
+  if (!existsSync(join(CLAW3D_INSTALL_DIR, "node_modules"))) return false;
 
   adapterError = "";
   adapterLogs = "";
@@ -927,6 +934,9 @@ export function startAdapter(): boolean {
     HOME: homedir(),
     TERM: "dumb",
     HERMES_API_KEY: getApiServerKey(),
+    HERMES_API_URL: getApiUrl(),
+    HERMES_AGENT_NAME: "ORION",
+    CLAW3D_GATEWAY_ADAPTER_TYPE: "hermes",
     HERMES_ADAPTER_PORT: String(adapterPortFromWsUrl(getSavedWsUrl())),
   };
   const node = resolveCommand("node", env.PATH);
@@ -935,7 +945,7 @@ export function startAdapter(): boolean {
     node.command,
   );
   const proc = spawn(adapterScript.command, adapterScript.args, {
-    cwd: HERMES_OFFICE_DIR,
+    cwd: CLAW3D_INSTALL_DIR,
     env,
     stdio: ["ignore", "pipe", "pipe"],
     detached: true,
@@ -997,7 +1007,7 @@ export function stopAdapter(): void {
 }
 
 export function startAll(): { success: boolean; error?: string } {
-  if (!existsSync(join(HERMES_OFFICE_DIR, "node_modules"))) {
+  if (!existsSync(join(CLAW3D_INSTALL_DIR, "node_modules"))) {
     return {
       success: false,
       error: "Claw3D is not installed. Please install it first.",
