@@ -18,6 +18,18 @@ export interface OfficeKanbanCounts {
   doneRecent: number;
 }
 
+export interface OfficeKanbanCard {
+  id: string;
+  title: string;
+  status: string;
+  assignee?: string | null;
+  priority?: number | null;
+  startedAt?: number | null;
+  completedAt?: number | null;
+  result?: string | null;
+  skills?: string[];
+}
+
 export interface OfficePlatformCounts {
   connected: number;
   error: number;
@@ -39,6 +51,7 @@ export interface OfficeProfileStatus {
   recentMessageCount: number;
   lastInteractionAt?: number | null;
   kanban: OfficeKanbanCounts;
+  kanbanCards: OfficeKanbanCard[];
   platforms: OfficePlatformCounts;
 }
 
@@ -67,12 +80,23 @@ export interface OfficeStatusDependencies {
   now?: () => number;
   getConnectionConfig?: () => { mode?: ConnectionMode; ssh?: unknown };
   getBuildStatus?: () => OrionBuildStatus;
-  listProfiles?: (profile?: string) => Promise<OfficeProfileInput[]> | OfficeProfileInput[];
+  listProfiles?: (
+    profile?: string,
+  ) => Promise<OfficeProfileInput[]> | OfficeProfileInput[];
   gatewayStatus?: (profile?: string) => Promise<boolean> | boolean;
-  readPlatformStates?: (profile?: string) => Promise<Record<string, unknown>> | Record<string, unknown>;
-  getProviderCredentialStatus?: (provider: string, profile?: string) => Promise<ProviderStatusInput> | ProviderStatusInput;
-  listSessions?: (profile?: string) => Promise<OfficeSessionInput[]> | OfficeSessionInput[];
-  listKanbanTasks?: (profile?: string) => Promise<OfficeKanbanTaskInput[]> | OfficeKanbanTaskInput[];
+  readPlatformStates?: (
+    profile?: string,
+  ) => Promise<Record<string, unknown>> | Record<string, unknown>;
+  getProviderCredentialStatus?: (
+    provider: string,
+    profile?: string,
+  ) => Promise<ProviderStatusInput> | ProviderStatusInput;
+  listSessions?: (
+    profile?: string,
+  ) => Promise<OfficeSessionInput[]> | OfficeSessionInput[];
+  listKanbanTasks?: (
+    profile?: string,
+  ) => Promise<OfficeKanbanTaskInput[]> | OfficeKanbanTaskInput[];
 }
 
 export interface OfficeProfileInput {
@@ -85,7 +109,11 @@ export interface OfficeProfileInput {
   display_name?: string | null;
   description?: string | null;
   personality?: string | null;
-  display?: { name?: string | null; description?: string | null; personality?: string | null };
+  display?: {
+    name?: string | null;
+    description?: string | null;
+    personality?: string | null;
+  };
 }
 
 export interface OfficeSessionInput {
@@ -100,9 +128,17 @@ export interface OfficeSessionInput {
 }
 
 export interface OfficeKanbanTaskInput {
+  id?: string | number | null;
+  title?: string | null;
   status?: string | null;
-  completed_at?: number | null;
-  completedAt?: number | null;
+  assignee?: string | null;
+  priority?: number | null;
+  started_at?: number | string | null;
+  startedAt?: number | string | null;
+  completed_at?: number | string | null;
+  completedAt?: number | string | null;
+  result?: string | null;
+  skills?: unknown;
 }
 
 interface ProviderStatusInput {
@@ -131,25 +167,35 @@ export function reduceOfficeAgentState(input: {
   offline?: boolean;
 }): { state: OfficeAgentState; stateReason: string } {
   const kanban = { ...EMPTY_KANBAN, ...(input.kanban ?? {}) };
-  if (input.offline) return { state: "offline", stateReason: "Remote gateway is unreachable" };
+  if (input.offline)
+    return { state: "offline", stateReason: "Remote gateway is unreachable" };
   const platformErrors = input.platformErrors ?? 0;
   const connectedPlatforms = input.connectedPlatforms ?? 0;
-  if (input.authError || input.gatewayError || (platformErrors > 0 && connectedPlatforms === 0)) {
+  if (
+    input.authError ||
+    input.gatewayError ||
+    (platformErrors > 0 && connectedPlatforms === 0)
+  ) {
     return { state: "error", stateReason: "Platform or authentication error" };
   }
   const recent =
     typeof input.lastInteractionAt === "number" &&
     input.now - input.lastInteractionAt <= ACTIVE_THRESHOLD_MS;
   if (recent || kanban.running > 0) {
-    return { state: "active", stateReason: recent ? "Recent session activity" : "Running task" };
+    return {
+      state: "active",
+      stateReason: recent ? "Recent session activity" : "Running task",
+    };
   }
-  if (kanban.blocked > 0) return { state: "waiting", stateReason: "Blocked task needs attention" };
+  if (kanban.blocked > 0)
+    return { state: "waiting", stateReason: "Blocked task needs attention" };
   if (input.gatewayRunning) {
     return {
       state: "available",
-      stateReason: connectedPlatforms > 0
-        ? `Gateway online with ${connectedPlatforms} connected platform${connectedPlatforms === 1 ? "" : "s"}`
-        : "Gateway online and ready",
+      stateReason:
+        connectedPlatforms > 0
+          ? `Gateway online with ${connectedPlatforms} connected platform${connectedPlatforms === 1 ? "" : "s"}`
+          : "Gateway online and ready",
     };
   }
   return { state: "idle", stateReason: "Gateway is not running" };
@@ -160,10 +206,16 @@ export function resolveOfficeProfileMetadata(
   profile: OfficeProfileInput,
 ): Pick<OfficeProfileStatus, "displayName" | "description" | "personality"> {
   const displayName =
-    clean(profile.display_name) ?? clean(profile.display?.name) ?? prettifyProfileKey(id);
+    clean(profile.display_name) ??
+    clean(profile.display?.name) ??
+    prettifyProfileKey(id);
   const description =
-    clean(profile.description) ?? clean(profile.display?.description) ?? clean(profile.display?.personality) ?? null;
-  const personality = clean(profile.personality) ?? clean(profile.display?.personality) ?? null;
+    clean(profile.description) ??
+    clean(profile.display?.description) ??
+    clean(profile.display?.personality) ??
+    null;
+  const personality =
+    clean(profile.personality) ?? clean(profile.display?.personality) ?? null;
   return { displayName, description, personality };
 }
 
@@ -186,17 +238,33 @@ function toEpochMs(value: unknown): number | null {
   return null;
 }
 
-function summarizeSessions(sessions: OfficeSessionInput[], now: number) {
+function summarizeSessions(
+  sessions: OfficeSessionInput[],
+  now: number,
+): Pick<
+  OfficeProfileStatus,
+  | "activeSessionId"
+  | "recentSessionCount"
+  | "recentMessageCount"
+  | "lastInteractionAt"
+> {
   const recent = sessions
     .map((s) => ({
       s,
-      at: toEpochMs(s.lastInteractionAt ?? s.updatedAt ?? s.endedAt ?? s.startedAt),
+      at: toEpochMs(
+        s.lastInteractionAt ?? s.updatedAt ?? s.endedAt ?? s.startedAt,
+      ),
     }))
-    .filter((x): x is { s: OfficeSessionInput; at: number } => typeof x.at === "number")
+    .filter(
+      (x): x is { s: OfficeSessionInput; at: number } =>
+        typeof x.at === "number",
+    )
     .sort((a, b) => b.at - a.at);
   const within = recent.filter((x) => now - x.at <= ACTIVE_THRESHOLD_MS);
   return {
-    activeSessionId: (within[0]?.s.id ?? within[0]?.s.sessionId ?? null) as string | null,
+    activeSessionId: (within[0]?.s.id ?? within[0]?.s.sessionId ?? null) as
+      | string
+      | null,
     recentSessionCount: within.length,
     recentMessageCount: within.reduce(
       (sum, x) => sum + Number(x.s.messageCount ?? x.s.message_count ?? 0),
@@ -206,7 +274,35 @@ function summarizeSessions(sessions: OfficeSessionInput[], now: number) {
   };
 }
 
-function summarizeKanban(tasks: OfficeKanbanTaskInput[], now: number): OfficeKanbanCounts {
+export function summarizeKanbanCards(
+  tasks: OfficeKanbanTaskInput[],
+): OfficeKanbanCard[] {
+  return tasks
+    .filter((task) => task.id != null)
+    .map((task) => ({
+      id: String(task.id),
+      title: clean(task.title) ?? String(task.id),
+      status: clean(task.status) ?? "todo",
+      assignee: clean(task.assignee),
+      priority:
+        typeof task.priority === "number" && Number.isFinite(task.priority)
+          ? task.priority
+          : null,
+      startedAt: toEpochMs(task.startedAt ?? task.started_at),
+      completedAt: toEpochMs(task.completedAt ?? task.completed_at),
+      result: clean(task.result),
+      skills: Array.isArray(task.skills)
+        ? task.skills.filter(
+            (skill): skill is string => typeof skill === "string",
+          )
+        : [],
+    }));
+}
+
+function summarizeKanban(
+  tasks: OfficeKanbanTaskInput[],
+  now: number,
+): OfficeKanbanCounts {
   const counts = { ...EMPTY_KANBAN };
   for (const task of tasks) {
     const status = String(task.status ?? "").toLowerCase();
@@ -222,8 +318,14 @@ function summarizeKanban(tasks: OfficeKanbanTaskInput[], now: number): OfficeKan
   return counts;
 }
 
-function summarizePlatforms(states: Record<string, unknown>): OfficePlatformCounts {
-  const counts: OfficePlatformCounts = { connected: 0, error: 0, configured: 0 };
+function summarizePlatforms(
+  states: Record<string, unknown>,
+): OfficePlatformCounts {
+  const counts: OfficePlatformCounts = {
+    connected: 0,
+    error: 0,
+    configured: 0,
+  };
   for (const state of Object.values(states)) {
     const s = state as {
       configured?: boolean;
@@ -233,13 +335,21 @@ function summarizePlatforms(states: Record<string, unknown>): OfficePlatformCoun
       error_message?: string | null;
     };
     if (s.configured !== false) counts.configured++;
-    if (s.connected === true || s.state === "connected" || s.state === "running") counts.connected++;
+    if (
+      s.connected === true ||
+      s.state === "connected" ||
+      s.state === "running"
+    )
+      counts.connected++;
     if (s.error_code || s.error_message || s.state === "error") counts.error++;
   }
   return counts;
 }
 
-async function callSafely<T>(fn: () => T | Promise<T>, fallback: T): Promise<T> {
+async function callSafely<T>(
+  fn: () => T | Promise<T>,
+  fallback: T,
+): Promise<T> {
   try {
     return await fn();
   } catch {
@@ -262,7 +372,9 @@ const REQUIRED_DEPENDENCY_KEYS: (keyof OfficeStatusDependencies)[] = [
 function hasCompleteOfficeStatusDependencies(
   deps: OfficeStatusDependencies,
 ): deps is Required<OfficeStatusDependencies> {
-  return REQUIRED_DEPENDENCY_KEYS.every((key) => typeof deps[key] === "function");
+  return REQUIRED_DEPENDENCY_KEYS.every(
+    (key) => typeof deps[key] === "function",
+  );
 }
 
 async function resolveOfficeStatusDependencies(
@@ -280,14 +392,22 @@ export async function getOfficeStatus(
   const d = await resolveOfficeStatusDependencies(deps);
   const now = d.now();
   const conn = d.getConnectionConfig();
-  const source = conn.mode === "ssh" ? "ssh" : conn.mode === "remote" ? "remote" : "local";
-  const [profiles, gatewayRunning, platformStates, codex, honcho] = await Promise.all([
-    callSafely(() => d.listProfiles(profile), []),
-    callSafely(() => d.gatewayStatus(profile), false),
-    callSafely(() => d.readPlatformStates(profile), {}),
-    callSafely(() => d.getProviderCredentialStatus("openai-codex", profile), { configured: false, source: "missing" }),
-    callSafely(() => d.getProviderCredentialStatus("honcho", profile), { configured: false, source: "missing" }),
-  ]);
+  const source =
+    conn.mode === "ssh" ? "ssh" : conn.mode === "remote" ? "remote" : "local";
+  const [profiles, gatewayRunning, platformStates, codex, honcho] =
+    await Promise.all([
+      callSafely(() => d.listProfiles(profile), []),
+      callSafely(() => d.gatewayStatus(profile), false),
+      callSafely(() => d.readPlatformStates(profile), {}),
+      callSafely(() => d.getProviderCredentialStatus("openai-codex", profile), {
+        configured: false,
+        source: "missing",
+      }),
+      callSafely(() => d.getProviderCredentialStatus("honcho", profile), {
+        configured: false,
+        source: "missing",
+      }),
+    ]);
   const platformCounts = summarizePlatforms(platformStates);
   const outputProfiles: OfficeProfileStatus[] = [];
   for (const p of profiles) {
@@ -298,7 +418,10 @@ export async function getOfficeStatus(
     ]);
     const sessionSummary = summarizeSessions(sessions, now);
     const kanban = summarizeKanban(tasks, now);
-    const profilePlatformCounts = profile === id || profiles.length === 1 ? platformCounts : { connected: 0, error: 0, configured: 0 };
+    const profilePlatformCounts =
+      profile === id || profiles.length === 1
+        ? platformCounts
+        : { connected: 0, error: 0, configured: 0 };
     const profileGatewayRunning = Boolean(p.gatewayRunning ?? gatewayRunning);
     const reduction = reduceOfficeAgentState({
       gatewayRunning: profileGatewayRunning,
@@ -317,11 +440,14 @@ export async function getOfficeStatus(
       ...reduction,
       ...sessionSummary,
       kanban,
+      kanbanCards: summarizeKanbanCards(tasks),
       platforms: profilePlatformCounts,
     });
   }
   const activeProfile =
-    outputProfiles.find((p) => profiles.find((raw) => (raw.name ?? raw.id) === p.id)?.isActive)?.id ??
+    outputProfiles.find(
+      (p) => profiles.find((raw) => (raw.name ?? raw.id) === p.id)?.isActive,
+    )?.id ??
     outputProfiles[0]?.id ??
     null;
   return {
@@ -346,49 +472,65 @@ export async function getOfficeStatus(
   };
 }
 
-async function getDefaultOfficeStatusDependencies(): Promise<Required<OfficeStatusDependencies>> {
-  const [config, profiles, updater, hermes, messaging, sessions, kanban, ssh] = await Promise.all([
-    import("./config"),
-    import("./profiles"),
-    import("./updater-guard"),
-    import("./hermes"),
-    import("./messaging-platforms"),
-    import("./sessions"),
-    import("./kanban"),
-    import("./ssh-remote"),
-  ]);
+async function getDefaultOfficeStatusDependencies(): Promise<
+  Required<OfficeStatusDependencies>
+> {
+  const [config, profiles, updater, hermes, messaging, sessions, kanban, ssh] =
+    await Promise.all([
+      import("./config"),
+      import("./profiles"),
+      import("./updater-guard"),
+      import("./hermes"),
+      import("./messaging-platforms"),
+      import("./sessions"),
+      import("./kanban"),
+      import("./ssh-remote"),
+    ]);
   return {
     now: () => Date.now(),
     getConnectionConfig: config.getConnectionConfig,
     getBuildStatus: () => updater.getOrionBuildStatus(null),
     listProfiles: async () => {
       const conn = config.getConnectionConfig();
-      if (conn.mode === "ssh" && conn.ssh) return ssh.sshListProfiles(conn.ssh) as Promise<OfficeProfileInput[]>;
+      if (conn.mode === "ssh" && conn.ssh)
+        return ssh.sshListProfiles(conn.ssh) as Promise<OfficeProfileInput[]>;
       return profiles.listProfiles() as Promise<OfficeProfileInput[]>;
     },
     gatewayStatus: async () => {
       const conn = config.getConnectionConfig();
-      if (conn.mode === "ssh" && conn.ssh) return ssh.sshGatewayStatus(conn.ssh);
+      if (conn.mode === "ssh" && conn.ssh)
+        return ssh.sshGatewayStatus(conn.ssh);
       return hermes.isGatewayRunning();
     },
     readPlatformStates: async (p?: string) => {
       const conn = config.getConnectionConfig();
-      if (conn.mode === "ssh" && conn.ssh) return ssh.sshReadGatewayPlatformStates(conn.ssh, p);
-      return messaging.readLocalGatewayPlatformStates(p, hermes.isGatewayRunning());
+      if (conn.mode === "ssh" && conn.ssh)
+        return ssh.sshReadGatewayPlatformStates(conn.ssh, p);
+      return messaging.readLocalGatewayPlatformStates(
+        p,
+        hermes.isGatewayRunning(),
+      );
     },
     getProviderCredentialStatus: async (provider: string, p?: string) => {
       const conn = config.getConnectionConfig();
-      if (conn.mode === "ssh" && conn.ssh) return ssh.sshGetProviderCredentialStatus(conn.ssh, provider, p);
+      if (conn.mode === "ssh" && conn.ssh)
+        return ssh.sshGetProviderCredentialStatus(conn.ssh, provider, p);
       return config.getProviderCredentialStatus(provider, p);
     },
     listSessions: async (p?: string) => {
       const conn = config.getConnectionConfig();
-      if (conn.mode === "ssh" && conn.ssh) return ssh.sshListSessions(conn.ssh, 30, 0, p) as Promise<OfficeSessionInput[]>;
+      if (conn.mode === "ssh" && conn.ssh)
+        return ssh.sshListSessions(conn.ssh, 30, 0, p) as Promise<
+          OfficeSessionInput[]
+        >;
       return sessions.listSessions(30, 0) as OfficeSessionInput[];
     },
     listKanbanTasks: async (p?: string) => {
-      const res = await kanban.listTasks({ profile: p, includeArchived: false });
-      return (res.success ? res.data ?? [] : []) as OfficeKanbanTaskInput[];
+      const res = await kanban.listTasks({
+        profile: p,
+        includeArchived: false,
+      });
+      return (res.success ? (res.data ?? []) : []) as OfficeKanbanTaskInput[];
     },
   };
 }
