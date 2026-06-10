@@ -1,8 +1,13 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import OneChatModal from "./OneChatModal";
 
 const agents = [{ id: "alice", name: "Alice", status: "idle" as const, color: "#fff", item: "desk", gatewayRunning: true }];
+const twoAgents = [
+  ...agents,
+  { id: "bob", name: "Bob", status: "idle" as const, color: "#0f0", item: "desk", gatewayRunning: true },
+];
 
 function installApi() {
   const api = {
@@ -56,6 +61,40 @@ describe("OneChatModal office commands", () => {
     await send("mark TASK-1 done");
     fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));
     await screen.findByText("Cancelled.");
+    expect(api.kanbanCompleteTask).not.toHaveBeenCalled();
+  });
+  it("expires pending confirmations when the modal closes", async () => {
+    const api = installApi();
+    function Harness() {
+      const [open, setOpen] = useState(true);
+      return (
+        <>
+          <button type="button" onClick={() => setOpen(true)}>Open chat</button>
+          <OneChatModal open={open} onClose={() => setOpen(false)} agents={agents} />
+        </>
+      );
+    }
+    render(<Harness />);
+    await send("mark TASK-1 done");
+    expect(await screen.findByRole("button", { name: "Complete" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open chat" }));
+
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Complete" })).toBeNull());
+    expect(api.kanbanCompleteTask).not.toHaveBeenCalled();
+  });
+
+  it("expires pending confirmations when the selected agent changes", async () => {
+    const api = installApi();
+    render(<OneChatModal open onClose={() => {}} agents={twoAgents} />);
+    await send("mark TASK-1 done");
+    expect(await screen.findByRole("button", { name: "Complete" })).toBeTruthy();
+
+    fireEvent.click(screen.getByText("Bob"));
+    fireEvent.click(screen.getByText("Alice"));
+
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Complete" })).toBeNull());
     expect(api.kanbanCompleteTask).not.toHaveBeenCalled();
   });
 });

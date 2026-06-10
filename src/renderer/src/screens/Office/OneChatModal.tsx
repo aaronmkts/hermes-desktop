@@ -34,9 +34,37 @@ export default function OneChatModal({
   const [loadingMap, setLoadingMap] = useState<Record<string, boolean>>({});
   const [visible, setVisible] = useState(open);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const previousSelectedAgentId = useRef<string | null>(null);
   const commandDispatcher = useMemo(() => createOfficeCommandDispatcher({ api: window.hermesAPI, agents, profile }), [agents, profile]);
 
   const selectedAgent = agents.find((a) => a.id === selectedAgentId) ?? null;
+
+
+  const clearPendingConfirmationCards = (): void => {
+    setMessages((prev) => {
+      const next: Record<string, ChatMessage[]> = {};
+      for (const [agentId, list] of Object.entries(prev)) {
+        next[agentId] = list.map((m) => (m.confirmation ? { ...m, confirmation: undefined } : m));
+      }
+      return next;
+    });
+  };
+
+  useEffect(() => {
+    if (!open) {
+      commandDispatcher.expireConfirmations();
+      clearPendingConfirmationCards();
+    }
+  }, [open, commandDispatcher]);
+
+  useEffect(() => {
+    const previous = previousSelectedAgentId.current;
+    if (previous && selectedAgentId && previous !== selectedAgentId) {
+      commandDispatcher.expireConfirmations();
+      clearPendingConfirmationCards();
+    }
+    previousSelectedAgentId.current = selectedAgentId;
+  }, [selectedAgentId, commandDispatcher]);
 
   // Manage visible state for enter/exit transitions
   useEffect(() => {
@@ -325,6 +353,7 @@ export default function OneChatModal({
             <button
               type="button"
               onClick={onClose}
+              aria-label="Close"
               className="flex items-center justify-center rounded-md hover:bg-white/10 transition-colors"
               style={{ width: 28, height: 28 }}
             >

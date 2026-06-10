@@ -31,6 +31,28 @@ describe("office command dispatcher", () => {
     await expect(d.dispatchOfficeCommand("create task Bad assigned to Al")).resolves.toMatchObject({ type: "needsClarification" });
     expect(a.kanbanCreateTask).toHaveBeenCalledTimes(1);
   });
+
+  it("does not silently ignore unsupported board qualifiers when creating tasks", async () => {
+    const a = api();
+    const d = createOfficeCommandDispatcher({ api: a, agents, profile: "default" });
+
+    await expect(d.dispatchOfficeCommand("create task Fix login bug on board desktop")).resolves.toMatchObject({
+      type: "needsClarification",
+      message: expect.stringMatching(/board.*not supported|not support.*board/i),
+    });
+    expect(a.kanbanCreateTask).not.toHaveBeenCalled();
+  });
+
+  it("returns a structured error when task lookup list fails", async () => {
+    const a = api({ kanbanListTasks: vi.fn(async () => ({ success: false, error: "database unavailable" })) });
+    const d = createOfficeCommandDispatcher({ api: a, agents });
+
+    await expect(d.dispatchOfficeCommand("assign TASK-123 to Bob")).resolves.toEqual({
+      type: "error",
+      message: "List tasks failed: database unavailable",
+    });
+    expect(a.kanbanAssignTask).not.toHaveBeenCalled();
+  });
   it("resolves task ids before substrings and clarifies ambiguous refs", async () => {
     const a = api();
     const d = createOfficeCommandDispatcher({ api: a, agents });

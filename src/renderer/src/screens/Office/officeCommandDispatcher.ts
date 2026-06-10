@@ -38,13 +38,15 @@ export function createOfficeCommandDispatcher({ api, agents, profile }: { api: A
     return { clarification: { type: "needsClarification", message: matches.length ? `Which agent did you mean for ${ref}?` : `I could not find an agent matching ${ref}.`, options: matches.map((a) => a.name) } };
   };
 
-  const listTasks = async (): Promise<KanbanTask[]> => {
+  const listTasks = async (): Promise<{ tasks?: KanbanTask[]; error?: OfficeCommandResult }> => {
     const res = await api.kanbanListTasks({ profile });
-    if (!res.success) throw new Error(res.error || "Unable to list tasks");
-    return (res.data ?? []) as KanbanTask[];
+    if (!res.success) return { error: apiError("List tasks", res.error) };
+    return { tasks: (res.data ?? []) as KanbanTask[] };
   };
   const resolveTask = async (ref: string): Promise<{ task?: KanbanTask; clarification?: OfficeCommandResult }> => {
-    const tasks = await listTasks();
+    const listed = await listTasks();
+    if (listed.error) return { clarification: listed.error };
+    const tasks = listed.tasks ?? [];
     const n = norm(ref);
     const exactId = tasks.find((t) => norm(t.id) === n);
     if (exactId) return { task: exactId };
@@ -60,6 +62,7 @@ export function createOfficeCommandDispatcher({ api, agents, profile }: { api: A
     if (intent.kind === "unknown") return { type: "fallbackToChat", text: intent.text };
     if (intent.kind === "createTask") {
       if (!intent.title.trim()) return { type: "needsClarification", message: "What should the task title be?" };
+      if (intent.board) return { type: "needsClarification", message: `Creating tasks on a specific board is not supported from Office yet. Please create “${intent.title}” without the board qualifier or open Kanban.` };
       let assignee: string | undefined;
       if (intent.assignee) { const r = resolveAgent(intent.assignee); if (r.clarification) return r.clarification; assignee = r.id; }
       const res = await api.kanbanCreateTask({ title: intent.title, ...(assignee ? { assignee } : {}) }, profile);
@@ -119,5 +122,6 @@ export function createOfficeCommandDispatcher({ api, agents, profile }: { api: A
       return { type: "handled", message: "Office redesign acknowledged; no layout changes were applied in Phase 6." };
     },
     cancelOfficeCommand: async (id: string): Promise<OfficeCommandResult> => { confirmations.delete(id); return { type: "handled", message: "Cancelled." }; },
+    expireConfirmations: (): void => { confirmations.clear(); },
   };
 }
