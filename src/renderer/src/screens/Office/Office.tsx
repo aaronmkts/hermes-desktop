@@ -1,9 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Crown,
-  MessageCircle,
   Move,
-  Power,
   RefreshCw,
   RotateCcw,
   Save,
@@ -13,11 +10,13 @@ import {
 import { useI18n } from "../../components/useI18n";
 import oneChatIcon from "../../assets/images/one-chat.svg";
 import OneChatModal from "./OneChatModal";
+import OfficeDetailsPanel from "./OfficeDetailsPanel";
 import Office3D from "./office3d/Office3D";
 import { buildOperatorCards, officeStatusToAgents } from "./officeStatus";
 import type { OfficeAgent } from "./office3d/core/types";
 import {
   buildOfficeAgentActions,
+  buildOfficeAgentDetailRows,
   buildOfficeAgentStatusRows,
   type OfficeNavigationTarget,
 } from "./officeActions";
@@ -196,7 +195,10 @@ function Office({
       })
     : [];
   const selectedStatusRows = selectedAgent
-    ? buildOfficeAgentStatusRows(selectedAgent)
+    ? [
+        ...buildOfficeAgentStatusRows(selectedAgent),
+        ...buildOfficeAgentDetailRows(selectedAgent),
+      ]
     : [];
   const selectedIsCeo = selectedAgent?.position === "ceo";
   const selectedStatusColor =
@@ -547,268 +549,18 @@ function Office({
         )}
 
         {selectedAgent && (
-          <aside
-            style={{
-              position: "absolute",
-              top: 0,
-              right: 0,
-              bottom: 0,
-              width: 300,
-              display: "flex",
-              flexDirection: "column",
-              gap: 16,
-              padding: "18px 18px 22px",
-              background: "var(--card, rgba(20,24,33,0.96))",
-              color: "#fff",
-              borderLeft: "1px solid rgba(255,255,255,0.08)",
-              boxShadow: "-12px 0 32px rgba(0,0,0,0.28)",
-              overflowY: "auto",
-            }}
-          >
-            <div
-              style={{
-                display: "flex",
-                alignItems: "flex-start",
-                justifyContent: "space-between",
-                gap: 8,
-              }}
-            >
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <span
-                  style={{
-                    width: 12,
-                    height: 12,
-                    borderRadius: 4,
-                    background: selectedAgent.color,
-                    flex: "0 0 auto",
-                  }}
-                />
-                <span style={{ fontWeight: 700, fontSize: 16 }}>
-                  {selectedAgent.name}
-                </span>
-              </div>
-              <button
-                type="button"
-                onClick={() => setSelectedId(null)}
-                title={t("office.close")}
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  padding: 4,
-                  borderRadius: 6,
-                  border: "none",
-                  background: "transparent",
-                  color: "rgba(255,255,255,0.7)",
-                  cursor: "pointer",
-                }}
-              >
-                <X size={16} />
-              </button>
-            </div>
-
-            <div
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 6,
-                alignSelf: "flex-start",
-                padding: "4px 10px",
-                borderRadius: 999,
-                fontSize: 12,
-                fontWeight: 600,
-                background: selectedIsCeo
-                  ? "rgba(245,158,11,0.18)"
-                  : "rgba(255,255,255,0.08)",
-                color: selectedIsCeo ? "#fbbf24" : "rgba(255,255,255,0.85)",
-              }}
-            >
-              {selectedIsCeo && <Crown size={13} />}
-              {selectedIsCeo ? t("office.ceo") : t("office.employee")}
-            </div>
-
-            <dl
-              style={{
-                display: "grid",
-                gridTemplateColumns: "auto 1fr",
-                gap: "10px 14px",
-                margin: 0,
-                fontSize: 13,
-              }}
-            >
-              <dt style={{ opacity: 0.55 }}>{t("office.statusLabel")}</dt>
-              <dd
-                style={{
-                  margin: 0,
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 6,
-                }}
-              >
-                <span
-                  style={{
-                    width: 8,
-                    height: 8,
-                    borderRadius: 999,
-                    background: selectedStatusColor,
-                  }}
-                />
-                {t(`office.status_${selectedAgent.status}`)}
-              </dd>
-
-              <dt style={{ opacity: 0.55 }}>{t("office.modelLabel")}</dt>
-              <dd style={{ margin: 0, wordBreak: "break-word" }}>
-                {selectedAgent.model || "—"}
-              </dd>
-
-              <dt style={{ opacity: 0.55 }}>{t("office.providerLabel")}</dt>
-              <dd style={{ margin: 0, wordBreak: "break-word" }}>
-                {selectedAgent.provider || "—"}
-              </dd>
-
-              <dt style={{ opacity: 0.55 }}>{t("office.gatewayLabel")}</dt>
-              <dd style={{ margin: 0 }}>
-                {selectedAgent.gatewayRunning
-                  ? t("office.gatewayRunning")
-                  : t("office.gatewayStopped")}
-              </dd>
-
-              <dt style={{ opacity: 0.55 }}>Reason</dt>
-              <dd style={{ margin: 0 }}>{selectedAgent.stateReason || "—"}</dd>
-
-              <dt style={{ opacity: 0.55 }}>Recent work</dt>
-              <dd style={{ margin: 0 }}>
-                {selectedAgent.recentSessionCount ?? 0} sessions ·{" "}
-                {selectedAgent.recentMessageCount ?? 0} messages
-              </dd>
-
-              <dt style={{ opacity: 0.55 }}>Tasks</dt>
-              <dd style={{ margin: 0 }}>
-                {selectedAgent.kanban?.running ?? 0} running ·{" "}
-                {selectedAgent.kanban?.blocked ?? 0} blocked
-              </dd>
-
-              <dt style={{ opacity: 0.55 }}>Platforms</dt>
-              <dd style={{ margin: 0 }}>
-                {selectedAgent.platforms?.connected ?? 0} connected ·{" "}
-                {selectedAgent.platforms?.error ?? 0} errors
-              </dd>
-            </dl>
-
-            {selectedStatusRows.length > 0 && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                <div style={{ fontSize: 12, fontWeight: 700, opacity: 0.75 }}>
-                  Operational details
-                </div>
-                {selectedStatusRows.map((row) => (
-                  <div
-                    key={row.label}
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      gap: 12,
-                      padding: "7px 9px",
-                      borderRadius: 8,
-                      background:
-                        row.severity === "error"
-                          ? "rgba(239,68,68,0.14)"
-                          : row.severity === "warning"
-                            ? "rgba(245,158,11,0.14)"
-                            : row.severity === "active"
-                              ? "rgba(34,197,94,0.14)"
-                              : "rgba(255,255,255,0.06)",
-                    }}
-                  >
-                    <span style={{ fontSize: 12, opacity: 0.65 }}>
-                      {row.label}
-                    </span>
-                    <span
-                      style={{
-                        fontSize: 12,
-                        fontWeight: 700,
-                        textAlign: "right",
-                      }}
-                    >
-                      {row.value}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            <div
-              style={{ display: "grid", gridTemplateColumns: "1fr", gap: 8 }}
-            >
-              {selectedActions.map((action) => (
-                <button
-                  key={action.id}
-                  type="button"
-                  disabled={
-                    Boolean(action.disabled) || actionBusy === action.id
-                  }
-                  onClick={() => void handleAgentAction(action)}
-                  title={
-                    action.disabled
-                      ? "Navigation is not available in this view yet"
-                      : action.label
-                  }
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: 8,
-                    padding: "9px 12px",
-                    borderRadius: 10,
-                    border: "1px solid rgba(255,255,255,0.14)",
-                    background:
-                      action.kind === "chat"
-                        ? "rgba(59,130,246,0.22)"
-                        : "rgba(255,255,255,0.07)",
-                    color: action.disabled
-                      ? "rgba(255,255,255,0.35)"
-                      : "rgba(255,255,255,0.9)",
-                    cursor: action.disabled ? "not-allowed" : "pointer",
-                    fontSize: 13,
-                    fontWeight: 650,
-                  }}
-                >
-                  {action.kind === "chat" ? (
-                    <MessageCircle size={14} />
-                  ) : action.kind === "restartGateway" ? (
-                    <Power size={14} />
-                  ) : null}
-                  {actionBusy === action.id ? "Working…" : action.label}
-                </button>
-              ))}
-            </div>
-
-            <button
-              type="button"
-              onClick={() => setCeo(selectedIsCeo ? null : selectedAgent.id)}
-              style={{
-                marginTop: 8,
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: 8,
-                padding: "10px 14px",
-                borderRadius: 10,
-                border: selectedIsCeo
-                  ? "1px solid rgba(255,255,255,0.18)"
-                  : "1px solid rgba(245,158,11,0.5)",
-                background: selectedIsCeo
-                  ? "transparent"
-                  : "rgba(245,158,11,0.16)",
-                color: selectedIsCeo ? "rgba(255,255,255,0.85)" : "#fbbf24",
-                cursor: "pointer",
-                fontSize: 13,
-                fontWeight: 600,
-              }}
-            >
-              <Crown size={15} />
-              {selectedIsCeo ? t("office.removeCeo") : t("office.makeCeo")}
-            </button>
-          </aside>
+          <OfficeDetailsPanel
+            agent={selectedAgent}
+            isCeo={selectedIsCeo}
+            statusColor={selectedStatusColor}
+            statusRows={selectedStatusRows}
+            actions={selectedActions}
+            actionBusy={actionBusy}
+            onClose={() => setSelectedId(null)}
+            onAction={(action) => void handleAgentAction(action)}
+            onToggleCeo={() => setCeo(selectedIsCeo ? null : selectedAgent.id)}
+            t={t}
+          />
         )}
 
         {!loading && agents.length === 0 && (

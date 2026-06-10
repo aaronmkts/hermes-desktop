@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildOfficeAgentActions,
+  buildOfficeAgentDetailRows,
   buildOfficeAgentStatusRows,
   type OfficeActionAvailability,
 } from "../src/renderer/src/screens/Office/officeActions";
@@ -73,5 +74,55 @@ describe("Office agent status detail rows", () => {
     expect(
       buildOfficeAgentStatusRows({ id: "default", name: "Default", status: "idle", color: "#fff", item: "desk" }),
     ).toEqual([]);
+  });
+});
+
+describe("Office agent detail rows", () => {
+  const agent = {
+    id: "default",
+    name: "Default",
+    status: "waiting" as const,
+    color: "#fff",
+    item: "desk",
+    activeSessionId: "session-123",
+    lastInteractionAt: Date.UTC(2026, 5, 9, 12, 0, 0),
+    description: "Coordinates support work.",
+    personality: "Calm and direct.",
+    kanban: { todo: 2, ready: 1, running: 1, blocked: 3, doneRecent: 4 },
+  };
+
+  it("derives full workload, blocked warning, and assignment context", () => {
+    const rows = buildOfficeAgentDetailRows(agent, Date.UTC(2026, 5, 9, 12, 30, 0));
+
+    expect(rows).toEqual(
+      expect.arrayContaining([
+        {
+          label: "Workload",
+          value: "2 todo · 1 ready · 1 running · 3 blocked · 4 done today",
+        },
+        {
+          label: "Blocked work",
+          value: "3 blocked tasks need operator attention",
+          severity: "warning",
+        },
+        {
+          label: "Assignment context",
+          value: "Profile-scoped assigned work for Default (default)",
+        },
+      ]),
+    );
+  });
+
+  it("surfaces active session, last interaction, description, and personality", () => {
+    const rows = buildOfficeAgentDetailRows(agent, Date.UTC(2026, 5, 9, 12, 30, 0));
+
+    expect(rows).toEqual(
+      expect.arrayContaining([
+        { label: "Active session", value: "session-123" },
+        { label: "Last interaction", value: "30m ago" },
+        { label: "Description", value: "Coordinates support work." },
+        { label: "Personality", value: "Calm and direct." },
+      ]),
+    );
   });
 });
