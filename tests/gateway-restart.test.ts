@@ -42,6 +42,7 @@ vi.mock("../src/main/installer", () => ({
 vi.mock("../src/main/config", () => ({
   getModelConfig: () => ({ model: "test-model", provider: "openrouter" }),
   getApiServerKey: () => "",
+  readDesktopConfig: () => ({}),
   readEnv: (profile?: string) => ({ TEST_PROFILE_KEY: profile || "default" }),
   getConnectionConfig: () => ({ mode: connModeRef.mode }),
   getConfigValue: () => "",
