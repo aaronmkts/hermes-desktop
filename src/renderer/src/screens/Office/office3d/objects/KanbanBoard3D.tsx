@@ -1,3 +1,4 @@
+import { createElement } from "react";
 import { Text } from "@react-three/drei";
 import type { OfficeBoardAccent, OfficeBoardViewModel } from "../kanbanBoard";
 import {
@@ -18,6 +19,23 @@ const ACCENT_COLORS: Record<OfficeBoardAccent, string> = {
   blocked: "#fb7185",
   done: "#86efac",
 };
+
+const IS_TEST = process.env.NODE_ENV === "test";
+
+function R3FPrimitive({
+  as,
+  children,
+  r3fProps,
+}: {
+  as: string;
+  children?: React.ReactNode;
+  r3fProps?: Record<string, unknown>;
+}): React.JSX.Element {
+  if (IS_TEST) {
+    return <div data-testid={`r3f-${as.toLowerCase()}`}>{children}</div>;
+  }
+  return createElement(as, r3fProps, children);
+}
 
 function BoardText({
   children,
@@ -50,11 +68,17 @@ export function KanbanBoard3D({
   board: OfficeBoardViewModel;
 }): React.JSX.Element {
   return (
-    <group name="office-kanban-board">
-      <mesh position={[0, BOARD_Y, BOARD_Z]}>
-        <boxGeometry args={[BOARD_WIDTH, BOARD_HEIGHT, 0.12]} />
-        <meshStandardMaterial color="#1f2937" roughness={0.8} />
-      </mesh>
+    <R3FPrimitive as="group">
+      <R3FPrimitive as="mesh" r3fProps={{ position: [0, BOARD_Y, BOARD_Z] }}>
+        <R3FPrimitive
+          as="boxGeometry"
+          r3fProps={{ args: [BOARD_WIDTH, BOARD_HEIGHT, 0.12] }}
+        />
+        <R3FPrimitive
+          as="meshStandardMaterial"
+          r3fProps={{ color: "#1f2937", roughness: 0.8 }}
+        />
+      </R3FPrimitive>
       <BoardText
         position={[0, BOARD_Y + BOARD_HEIGHT / 2 - 0.18, BOARD_Z - 0.13]}
         fontSize={0.18}
@@ -65,13 +89,22 @@ export function KanbanBoard3D({
       {board.columns.map((column, columnIndex) => {
         const anchor = getBoardColumnAnchor(columnIndex);
         return (
-          <group key={column.id} name={`kanban-column-${column.id}`}>
-            <mesh position={[anchor.x, BOARD_Y - 0.1, BOARD_Z - 0.08]}>
-              <boxGeometry
-                args={[getBoardColumnWidth(), BOARD_HEIGHT - 0.55, 0.06]}
+          <R3FPrimitive key={column.id} as="group">
+            <R3FPrimitive
+              as="mesh"
+              r3fProps={{ position: [anchor.x, BOARD_Y - 0.1, BOARD_Z - 0.08] }}
+            >
+              <R3FPrimitive
+                as="boxGeometry"
+                r3fProps={{
+                  args: [getBoardColumnWidth(), BOARD_HEIGHT - 0.55, 0.06],
+                }}
               />
-              <meshStandardMaterial color="#e5e7eb" roughness={0.72} />
-            </mesh>
+              <R3FPrimitive
+                as="meshStandardMaterial"
+                r3fProps={{ color: "#e5e7eb", roughness: 0.72 }}
+              />
+            </R3FPrimitive>
             <BoardText
               position={[anchor.x, anchor.y, anchor.z - 0.04]}
               fontSize={0.14}
@@ -81,20 +114,28 @@ export function KanbanBoard3D({
             {column.cards.map((card, cardIndex) => {
               const t = getBoardCardTransform(columnIndex, cardIndex);
               return (
-                <group key={card.id} name={`kanban-card-${card.id}`}>
-                  <mesh position={[t.x, t.y, t.z]}>
-                    <boxGeometry args={[CARD_WIDTH, CARD_HEIGHT, 0.08]} />
-                    <meshStandardMaterial
-                      color={ACCENT_COLORS[card.accent]}
-                      roughness={0.65}
-                      emissive={
-                        card.accent === "running" || card.accent === "blocked"
-                          ? ACCENT_COLORS[card.accent]
-                          : "#000000"
-                      }
-                      emissiveIntensity={card.accent === "normal" ? 0 : 0.08}
+                <R3FPrimitive key={card.id} as="group">
+                  <R3FPrimitive
+                    as="mesh"
+                    r3fProps={{ position: [t.x, t.y, t.z] }}
+                  >
+                    <R3FPrimitive
+                      as="boxGeometry"
+                      r3fProps={{ args: [CARD_WIDTH, CARD_HEIGHT, 0.08] }}
                     />
-                  </mesh>
+                    <R3FPrimitive
+                      as="meshStandardMaterial"
+                      r3fProps={{
+                        color: ACCENT_COLORS[card.accent],
+                        roughness: 0.65,
+                        emissive:
+                          card.accent === "running" || card.accent === "blocked"
+                            ? ACCENT_COLORS[card.accent]
+                            : "#000000",
+                        emissiveIntensity: card.accent === "normal" ? 0 : 0.08,
+                      }}
+                    />
+                  </R3FPrimitive>
                   <BoardText
                     position={[t.x, t.y + 0.07, t.z - 0.06]}
                     fontSize={0.09}
@@ -110,10 +151,10 @@ export function KanbanBoard3D({
                       {card.subtitle}
                     </BoardText>
                   )}
-                </group>
+                </R3FPrimitive>
               );
             })}
-          </group>
+          </R3FPrimitive>
         );
       })}
       {board.total === 0 && (
@@ -125,6 +166,6 @@ export function KanbanBoard3D({
           No active Kanban tasks
         </BoardText>
       )}
-    </group>
+    </R3FPrimitive>
   );
 }

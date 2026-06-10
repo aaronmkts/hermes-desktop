@@ -1,13 +1,13 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import React from "react";
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { KanbanBoard3D } from "./KanbanBoard3D";
 import type { OfficeBoardViewModel } from "../kanbanBoard";
 
 vi.mock("@react-three/drei", () => ({
-  Text: ({ children, ...props }: any) =>
-    React.createElement("Text", props, children),
+  Text: ({ children }: any) =>
+    React.createElement("span", { "data-testid": "r3f-text" }, children),
 }));
 
 const board: OfficeBoardViewModel = {
@@ -36,6 +36,28 @@ const board: OfficeBoardViewModel = {
     { id: "done", label: "Done", cards: [] },
   ],
 };
+
+const reactUnknownWarning =
+  /(?:is using incorrect casing|is unrecognized in this browser|React does not recognize the `[^`]+` prop)/;
+let consoleError: ReturnType<typeof vi.spyOn>;
+
+beforeEach(() => {
+  consoleError = vi
+    .spyOn(console, "error")
+    .mockImplementation((...args: unknown[]) => {
+      const message = args.map(String).join(" ");
+      if (reactUnknownWarning.test(message)) {
+        throw new Error(
+          `Unexpected React unknown tag/prop warning: ${message}`,
+        );
+      }
+    });
+});
+
+afterEach(() => {
+  consoleError.mockRestore();
+});
+
 describe("KanbanBoard3D", () => {
   it("renders all column labels", () => {
     render(<KanbanBoard3D board={board} />);
