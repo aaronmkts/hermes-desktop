@@ -1,14 +1,14 @@
 export const OFFICE_EXPERIENCE_BOUNDARY = {
   main: {
     label: "ORION Office",
-    kind: "built-in",
-    requiresExternalClaw3d: false,
+    kind: "claw3d-primary",
+    requiresExternalClaw3d: true,
   },
   externalClaw3d: {
-    label: "Advanced External Claw3D",
-    kind: "advanced-legacy",
+    label: "Native Office fallback",
+    kind: "internal-fallback",
     optional: true,
-    status: "Placeholder only; external Claw3D install/start is not implemented in the main Office flow.",
+    status: "Available only as an internal fallback when Claw3D APIs are unavailable; the main Office flow installs, starts, and embeds Claw3D Studio.",
   },
 } as const;
 
@@ -22,10 +22,10 @@ export function getOfficeExperienceCopy(): {
   return {
     mainTitle: OFFICE_EXPERIENCE_BOUNDARY.main.label,
     mainDescription:
-      "ORION Office is Hermes' built-in 3D workspace for observing agents and operator state without installing external Claw3D/hermes-office.",
+      "ORION Office installs, starts, and embeds Claw3D Studio for observing agents and operator state through the existing SSH gateway token flow.",
     externalTitle: OFFICE_EXPERIENCE_BOUNDARY.externalClaw3d.label,
     externalDescription:
-      "External Claw3D/hermes-office is optional, advanced, legacy visualization integration and is separate from the main ORION Office experience.",
+      "The native React office remains an internal fallback for renderer tests or environments where Claw3D IPC is unavailable.",
     externalStatus: OFFICE_EXPERIENCE_BOUNDARY.externalClaw3d.status,
   };
 }
