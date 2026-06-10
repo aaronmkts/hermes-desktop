@@ -13,6 +13,7 @@ import type {
 } from "../shared/messaging-platforms";
 import type { ChatToolEvent } from "../shared/chat-stream";
 import type { OfficeStatus } from "../main/office-status";
+import type { OfficeLayout } from "../shared/office-layout";
 
 interface ElectronAPI {
   process: {
@@ -407,6 +408,9 @@ interface HermesAPI {
   restartGateway: (profile?: string) => Promise<boolean>;
   gatewayStatus: () => Promise<boolean>;
   getOfficeStatus: (profile?: string) => Promise<OfficeStatus>;
+  getOfficeLayout: () => Promise<OfficeLayout>;
+  saveOfficeLayout: (layout: unknown) => Promise<OfficeLayout>;
+  resetOfficeLayout: () => Promise<OfficeLayout>;
 
   // Platform toggles
   getPlatformEnabled: (profile?: string) => Promise<Record<string, boolean>>;
