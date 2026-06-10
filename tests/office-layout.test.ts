@@ -24,25 +24,44 @@ describe("office layout model", () => {
     expect(layout.canvas).toEqual(OFFICE_CANVAS_SIZE);
     expect(layout.divider).toEqual({ x: 1180, doorYMin: 820, doorYMax: 1000 });
     expect(layout.walls).toHaveLength(2);
-    expect(layout.walls.map((wall) => wall.id)).toEqual(["partition-top", "partition-bottom"]);
+    expect(layout.walls.map((wall) => wall.id)).toEqual([
+      "partition-top",
+      "partition-bottom",
+    ]);
     expect(layout.restSeats).toHaveLength(6);
-    expect(layout.restFurniture.map((item) => item.id)).toEqual(expect.arrayContaining(["rest-couch", "rest-pantry"]));
+    expect(layout.restFurniture.map((item) => item.id)).toEqual(
+      expect.arrayContaining(["rest-couch", "rest-pantry"]),
+    );
     expect(layout.executiveDecor.map((item) => item.id)).toContain("ceo-couch");
   });
 
   it("assigns employees to the grid and the CEO to the executive desk", () => {
-    const assigned = assignOfficeLayoutWorkstations(createDefaultOfficeLayout(), ["ceo", "ada", "grace", "linus"], "ceo");
+    const assigned = assignOfficeLayoutWorkstations(
+      createDefaultOfficeLayout(),
+      ["ceo", "ada", "grace", "linus"],
+      "ceo",
+    );
     expect(assigned).toMatchObject([
       { id: "desk-0", agentId: "ada", deskX: 145, deskY: 300 },
       { id: "desk-1", agentId: "grace", deskX: 355, deskY: 300 },
       { id: "desk-2", agentId: "linus", deskX: 565, deskY: 300 },
-      { id: "desk-ceo", agentId: "ceo", deskX: 470, deskY: 1180, isExecutive: true },
+      {
+        id: "desk-ceo",
+        agentId: "ceo",
+        deskX: 470,
+        deskY: 1180,
+        isExecutive: true,
+      },
     ]);
   });
 
   it("normalizes missing or malformed layout to defaults", () => {
-    expect(normalizeOfficeLayout(undefined)).toEqual(createDefaultOfficeLayout());
-    expect(normalizeOfficeLayout({ schemaVersion: 2 })).toEqual(createDefaultOfficeLayout());
+    expect(normalizeOfficeLayout(undefined)).toEqual(
+      createDefaultOfficeLayout(),
+    );
+    expect(normalizeOfficeLayout({ schemaVersion: 2 })).toEqual(
+      createDefaultOfficeLayout(),
+    );
   });
 
   it("clamps coordinates, dimensions and facing values", () => {
@@ -51,7 +70,20 @@ describe("office layout model", () => {
       divider: { x: -20, doorYMin: 200, doorYMax: 190 },
       walls: [{ id: "wall", x: -1, y: 1900, w: 9999, h: -4 }],
       restSeats: [{ x: 9999, y: -20, facing: 99 }],
-      workstations: [{ id: "station", deskX: -10, deskY: 2000, deskFacingDeg: 725, chairX: -2, chairY: 1901, chairFacingDeg: -90, seatX: 1902, seatY: -3, seatFacing: 99 }],
+      workstations: [
+        {
+          id: "station",
+          deskX: -10,
+          deskY: 2000,
+          deskFacingDeg: 725,
+          chairX: -2,
+          chairY: 1901,
+          chairFacingDeg: -90,
+          seatX: 1902,
+          seatY: -3,
+          seatFacing: 99,
+        },
+      ],
     });
     expect(layout.divider).toEqual(createDefaultOfficeLayout().divider);
     expect(layout.walls[0]).toMatchObject({ x: 0, y: 1800, w: 1800, h: 0 });
@@ -59,7 +91,16 @@ describe("office layout model", () => {
     expect(layout.restSeats[0].y).toBe(0);
     expect(layout.restSeats[0].facing).toBeGreaterThanOrEqual(-Math.PI);
     expect(layout.restSeats[0].facing).toBeLessThanOrEqual(Math.PI);
-    expect(layout.workstations[0]).toMatchObject({ deskX: 0, deskY: 1800, deskFacingDeg: 5, chairX: 0, chairY: 1800, chairFacingDeg: 270, seatX: 1800, seatY: 0 });
+    expect(layout.workstations[0]).toMatchObject({
+      deskX: 0,
+      deskY: 1800,
+      deskFacingDeg: 5,
+      chairX: 0,
+      chairY: 1800,
+      chairFacingDeg: 270,
+      seatX: 1800,
+      seatY: 0,
+    });
   });
 
   it("drops unknown furniture types, missing IDs and invalid tints", () => {
@@ -68,17 +109,112 @@ describe("office layout model", () => {
       restFurniture: [
         { id: "", type: "couch", x: 1, y: 2, facingDeg: 3 },
         { id: "alien", type: "spaceship", x: 1, y: 2, facingDeg: 3 },
-        { id: "bad-tint", type: "couch", x: 1, y: 2, facingDeg: 3, tint: "red" },
-        { id: "null-tint", type: "plant", x: 1, y: 2, facingDeg: 3, tint: null },
+        {
+          id: "bad-tint",
+          type: "couch",
+          x: 1,
+          y: 2,
+          facingDeg: 3,
+          tint: "red",
+        },
+        {
+          id: "null-tint",
+          type: "plant",
+          x: 1,
+          y: 2,
+          facingDeg: 3,
+          tint: null,
+        },
       ],
     });
-    expect(layout.restFurniture.map((item) => item.id)).toEqual(["bad-tint", "null-tint"]);
+    expect(layout.restFurniture.map((item) => item.id)).toEqual([
+      "bad-tint",
+      "null-tint",
+    ]);
     expect(layout.restFurniture[0]).not.toHaveProperty("tint");
     expect(layout.restFurniture[1].tint).toBeNull();
   });
 
+  it("does not persist live agent assignments in physical workstation layout", () => {
+    const layout = normalizeOfficeLayout({
+      ...createDefaultOfficeLayout(),
+      workstations: [
+        {
+          id: "physical-a",
+          agentId: "ada",
+          deskX: 10,
+          deskY: 20,
+          deskFacingDeg: 0,
+          chairX: 11,
+          chairY: 21,
+          chairFacingDeg: 0,
+          seatX: 12,
+          seatY: 22,
+          seatFacing: 0,
+        },
+        {
+          id: "physical-b",
+          agentId: null,
+          deskX: 30,
+          deskY: 40,
+          deskFacingDeg: 0,
+          chairX: 31,
+          chairY: 41,
+          chairFacingDeg: 0,
+          seatX: 32,
+          seatY: 42,
+          seatFacing: 0,
+        },
+      ],
+    });
+
+    expect(layout.workstations[0]).not.toHaveProperty("agentId");
+    expect(layout.workstations[1]).not.toHaveProperty("agentId");
+  });
+
+  it("preserves physical workstation ids when assigning agents", () => {
+    const base = createDefaultOfficeLayout();
+    const layout = normalizeOfficeLayout({
+      ...base,
+      workstations: [
+        { ...base.workstations[0], id: "physical-a" },
+        { ...base.workstations[1], id: "physical-b" },
+        {
+          ...base.workstations.find((station) => station.isExecutive),
+          id: "physical-ceo",
+        },
+      ],
+    });
+
+    const assigned = assignOfficeLayoutWorkstations(
+      layout,
+      ["ceo", "ada", "grace", "linus"],
+      "ceo",
+    );
+
+    expect(assigned.map((station) => station.id)).toEqual([
+      "physical-a",
+      "physical-b",
+      "desk-2",
+      "physical-ceo",
+    ]);
+    expect(assigned.map((station) => station.agentId)).toEqual([
+      "ada",
+      "grace",
+      "linus",
+      "ceo",
+    ]);
+  });
+
   it("fills missing arrays from defaults", () => {
-    const { walls, restSeats, restFurniture, executiveDecor, workstations, ...partial } = createDefaultOfficeLayout();
+    const {
+      walls,
+      restSeats,
+      restFurniture,
+      executiveDecor,
+      workstations,
+      ...partial
+    } = createDefaultOfficeLayout();
     const layout = normalizeOfficeLayout(partial);
     expect(layout.walls).toEqual(walls);
     expect(layout.restSeats).toEqual(restSeats);
@@ -100,6 +236,12 @@ describe("renderer layout compatibility", () => {
     expect(EXECUTIVE_DECOR).toEqual(layout.executiveDecor);
   });
   it("keeps buildWorkstations behavior stable", () => {
-    expect(buildWorkstations(["ceo", "ada"], "ceo")).toEqual(assignOfficeLayoutWorkstations(createDefaultOfficeLayout(), ["ceo", "ada"], "ceo"));
+    expect(buildWorkstations(["ceo", "ada"], "ceo")).toEqual(
+      assignOfficeLayoutWorkstations(
+        createDefaultOfficeLayout(),
+        ["ceo", "ada"],
+        "ceo",
+      ),
+    );
   });
 });
