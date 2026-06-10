@@ -88,7 +88,7 @@ function Office({
     } finally {
       setClaw3dLoading(false);
     }
-  }, [supportsClaw3d]);
+  }, [profile, supportsClaw3d]);
 
   useEffect(() => {
     if (visible && supportsClaw3d) {
