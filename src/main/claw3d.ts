@@ -516,27 +516,34 @@ function isAdapterRunning(): boolean {
   return false;
 }
 
-// Probe an HTTP endpoint with a short timeout. Returns true if any response
-// arrives (we don't care about the status code — even a 404 confirms a
-// listener). Used to detect remote Claw3D without dragging
-// in the SSH tunnel machinery.
-function probeHttp(url: string, timeoutMs = 1500): Promise<boolean> {
+// Probe an HTTP endpoint with a short timeout and return its status.
+function probeHttpStatus(url: string, timeoutMs = 1500): Promise<number | null> {
   return new Promise((resolve) => {
     const req = http.request(
       url,
       { method: "GET", timeout: timeoutMs },
       (res) => {
         res.resume();
-        resolve(true);
+        resolve(res.statusCode ?? null);
       },
     );
-    req.on("error", () => resolve(false));
+    req.on("error", () => resolve(null));
     req.on("timeout", () => {
       req.destroy();
-      resolve(false);
+      resolve(null);
     });
     req.end();
   });
+}
+
+export function isClaw3dOfficeStatusReady(statusCode: number | null): boolean {
+  if (statusCode === null) return false;
+  if (statusCode === 404) return false;
+  return statusCode < 500;
+}
+
+async function probeClaw3dOffice(url: string, timeoutMs = 1500): Promise<boolean> {
+  return isClaw3dOfficeStatusReady(await probeHttpStatus(url, timeoutMs));
 }
 
 export interface Claw3dReadyProbeTargets {
@@ -577,7 +584,7 @@ export async function waitForClaw3dReady(
   const deadline = Date.now() + timeoutMs;
 
   while (Date.now() < deadline) {
-    const officeReady = await probeHttp(targets.officeUrl, Math.min(intervalMs, 2000));
+    const officeReady = await probeClaw3dOffice(targets.officeUrl, Math.min(intervalMs, 2000));
     const adapterReady = targets.requireAdapter
       ? await probeTcp(targets.adapterPort, targets.adapterHost, Math.min(intervalMs, 2000))
       : true;
@@ -615,7 +622,7 @@ export async function getClaw3dStatus(profile?: string): Promise<Claw3dStatus> {
   const conn = getConnectionConfig();
   if (conn.mode === "ssh" && conn.ssh?.host) {
     const candidateUrl = `http://${conn.ssh.host}:${port}`;
-    const reachable = await probeHttp(candidateUrl, 1500);
+    const reachable = await probeClaw3dOffice(`${candidateUrl}/office`, 1500);
     if (reachable) remoteUrl = candidateUrl;
   }
 

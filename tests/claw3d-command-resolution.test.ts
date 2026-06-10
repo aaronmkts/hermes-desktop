@@ -4,6 +4,7 @@ import {
   createClaw3dScriptInvocation,
   createNpmCommandInvocation,
   hasClaw3dOfficeRoute,
+  isClaw3dOfficeStatusReady,
   shouldRefreshClaw3dCheckout,
   patchNextConfigForEmbedding,
   isWindowsCommandScript,
@@ -158,5 +159,14 @@ describe("Claw3D command resolution", () => {
         (path) => path === "package.json" || path === "src/app/office/page.tsx",
       ),
     ).toBe(false);
+  });
+
+  it("does not treat Claw3D /office 404 responses as ready", () => {
+    expect(isClaw3dOfficeStatusReady(200)).toBe(true);
+    expect(isClaw3dOfficeStatusReady(307)).toBe(true);
+    expect(isClaw3dOfficeStatusReady(401)).toBe(true);
+    expect(isClaw3dOfficeStatusReady(404)).toBe(false);
+    expect(isClaw3dOfficeStatusReady(500)).toBe(false);
+    expect(isClaw3dOfficeStatusReady(null)).toBe(false);
   });
 });
