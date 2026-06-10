@@ -114,6 +114,7 @@ import {
 } from "./claw3d";
 import { startOfficeStack } from "./office-start";
 import { getOfficeStatus } from "./office-status";
+import { getOfficeLayout, resetOfficeLayout, saveOfficeLayout } from "./office-layout-store";
 import {
   readEnv,
   setEnvValue,
@@ -1252,6 +1253,11 @@ function setupIPC(): void {
   ipcMain.handle("office-status", (_event, profile?: string) =>
     getOfficeStatus(profile),
   );
+  ipcMain.handle("office-layout-get", () => getOfficeLayout());
+  ipcMain.handle("office-layout-save", (_event, layout: unknown) =>
+    saveOfficeLayout(layout),
+  );
+  ipcMain.handle("office-layout-reset", () => resetOfficeLayout());
 
   // Platform toggles (config.yaml platforms section)
   ipcMain.handle("get-platform-enabled", (_event, profile?: string) => {
