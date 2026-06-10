@@ -359,9 +359,7 @@ function Gateway({ profile }: { profile?: string }): React.JSX.Element {
       <div className="gateway-page-header">
         <div>
           <h1 className="settings-header">{t("gateway.title")}</h1>
-          <p className="gateway-page-subtitle">
-            {t("gateway.subtitle")}
-          </p>
+          <p className="gateway-page-subtitle">{t("gateway.subtitle")}</p>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           {isRemoteSshSource && (
@@ -425,9 +423,7 @@ function Gateway({ profile }: { profile?: string }): React.JSX.Element {
               {gatewayError}
             </div>
           )}
-          <div className="settings-field-hint">
-            {t("gateway.configHint")}
-          </div>
+          <div className="settings-field-hint">{t("gateway.configHint")}</div>
         </div>
         {catalog?.message && (
           <div className="gateway-inline-warning">{catalog.message}</div>
@@ -530,9 +526,7 @@ function Gateway({ profile }: { profile?: string }): React.JSX.Element {
           ))}
         </div>
         {filteredPlatforms.length === 0 && (
-          <div className="gateway-empty-state">
-            {t("gateway.emptyState")}
-          </div>
+          <div className="gateway-empty-state">{t("gateway.emptyState")}</div>
         )}
       </div>
     </div>
@@ -596,7 +590,9 @@ function PlatformCard({
       clearedKeys.has(`${platform.id}:${field.key}`),
     );
   const status = platformStateLabel(platform, t);
-  const detailsLabel = platform.configured ? t("gateway.details") : t("gateway.configure");
+  const detailsLabel = platform.configured
+    ? t("gateway.details")
+    : t("gateway.configure");
 
   const closeModal = useCallback(() => {
     setModalOpen(false);
@@ -643,15 +639,29 @@ function PlatformCard({
             </span>
           </div>
         </div>
-        <label className="tools-toggle" title={t("gateway.enablePlatform")}>
-          <input
-            type="checkbox"
-            checked={platform.enabled}
-            disabled={isBusy}
-            onChange={() => void onToggle(platform)}
-          />
-          <span className="tools-toggle-track" />
-        </label>
+        <div
+          className={`gateway-toggle-wrapper${!platform.configured && !platform.enabled ? " gateway-toggle-needs-setup" : ""}`}
+          title={
+            platform.configured || platform.enabled
+              ? t("gateway.enablePlatform")
+              : undefined
+          }
+          data-tooltip={
+            !platform.configured && !platform.enabled
+              ? t("gateway.setupFirst")
+              : undefined
+          }
+        >
+          <label className="tools-toggle">
+            <input
+              type="checkbox"
+              checked={platform.enabled}
+              disabled={isBusy || (!platform.configured && !platform.enabled)}
+              onChange={() => void onToggle(platform)}
+            />
+            <span className="tools-toggle-track" />
+          </label>
+        </div>
       </div>
 
       <div className="gateway-platform-actions">
@@ -815,7 +825,9 @@ function PlatformCard({
                                   onToggleVisibility(platform.id, field.key)
                                 }
                                 title={
-                                  isVisible ? t("gateway.hideValue") : t("gateway.showValue")
+                                  isVisible
+                                    ? t("gateway.hideValue")
+                                    : t("gateway.showValue")
                                 }
                               >
                                 {isVisible ? (
@@ -852,7 +864,9 @@ function PlatformCard({
 
               {platform.toolsets?.length > 0 && (
                 <div className="gateway-capabilities">
-                  <div className="gateway-detail-heading">{t("gateway.capabilities")}</div>
+                  <div className="gateway-detail-heading">
+                    {t("gateway.capabilities")}
+                  </div>
                   <div className="gateway-capability-list">
                     {platform.toolsets.map((toolset) => (
                       <div
@@ -961,10 +975,18 @@ function platformStateLabel(
   tone: "ok" | "warn" | "muted" | "error";
 } {
   if (!platform.enabled) {
-    return { icon: "pending", label: t("gateway.states.disabled"), tone: "muted" };
+    return {
+      icon: "pending",
+      label: t("gateway.states.disabled"),
+      tone: "muted",
+    };
   }
   if (!platform.configured) {
-    return { icon: "pending", label: t("gateway.states.needsSetup"), tone: "warn" };
+    return {
+      icon: "pending",
+      label: t("gateway.states.needsSetup"),
+      tone: "warn",
+    };
   }
   if (platform.state === "connected") {
     return { icon: "ok", label: t("gateway.states.connected"), tone: "ok" };
