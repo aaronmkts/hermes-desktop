@@ -12,7 +12,7 @@ export interface OfficeStartDependencies {
   stopSshTunnel: () => void;
   sshReadRemoteApiKey: (config: SshConnectionConfig) => Promise<string>;
   setSshRemoteApiKey: (key: string) => void;
-  startClaw3dAll: () => StartResult;
+  startClaw3dAll: (profile?: string) => StartResult;
   stopClaw3dAll: () => void;
   waitForClaw3dReady: () => Promise<boolean>;
 }
@@ -40,7 +40,7 @@ export async function startOfficeStack(
       deps.startGateway(profile);
     }
 
-    const result = deps.startClaw3dAll();
+    const result = deps.startClaw3dAll(profile);
     if (!result.success) return result;
 
     if (

@@ -262,9 +262,9 @@ export function adapterPortFromWsUrl(url: string): number {
  * rather than a generic `hermes` agent the user never selected (issue
  * #256). Falls back to `hermes` only when no model is configured.
  */
-function resolveOfficeModel(): string {
+function resolveOfficeModel(profile?: string): string {
   try {
-    const model = getModelConfig().model?.trim();
+    const model = getModelConfig(profile).model?.trim();
     if (model) return model;
   } catch {
     /* no model configured — fall through to the default */
@@ -360,11 +360,11 @@ export function writeOfficeFileIfChanged(filePath: string, content: string): boo
  * Write Claw3D settings to ~/.openclaw/claw3d/settings.json
  * and .env in the claw3d directory so onboarding is skipped.
  */
-function writeClaw3dSettings(wsUrl?: string): void {
+function writeClaw3dSettings(wsUrl?: string, profile?: string): void {
   const url = wsUrl || getSavedWsUrl();
   const adapterPort = adapterPortFromWsUrl(url);
   // Gateway bearer token — empty string when the gateway has no API_SERVER_KEY.
-  const apiKey = getApiServerKey();
+  const apiKey = getApiServerKey(profile);
 
   // Write ~/.openclaw/claw3d/settings.json
   try {
@@ -395,8 +395,9 @@ function writeClaw3dSettings(wsUrl?: string): void {
           port: getSavedPort(),
           url,
           apiKey,
-          model: resolveOfficeModel(),
+          model: resolveOfficeModel(profile),
           adapterPort,
+          apiUrl: getApiUrl(profile),
         }),
       );
     }
@@ -835,7 +836,7 @@ function killProcessTree(proc: ChildProcess): void {
   }
 }
 
-export function startDevServer(): boolean {
+export function startDevServer(profile?: string): boolean {
   if (isDevServerRunning()) return true;
   if (!existsSync(join(CLAW3D_INSTALL_DIR, "node_modules"))) return false;
 
@@ -847,8 +848,8 @@ export function startDevServer(): boolean {
     PATH: getEnhancedPath(),
     HOME: homedir(),
     TERM: "dumb",
-    HERMES_API_KEY: getApiServerKey(),
-    HERMES_API_URL: getApiUrl(),
+    HERMES_API_KEY: getApiServerKey(profile),
+    HERMES_API_URL: getApiUrl(profile),
     HERMES_AGENT_NAME: "ORION",
     CLAW3D_GATEWAY_ADAPTER_TYPE: "hermes",
     PORT: String(port),
@@ -919,7 +920,7 @@ export function stopDevServer(): void {
   cleanupPid(DEV_PID_FILE);
 }
 
-export function startAdapter(): boolean {
+export function startAdapter(profile?: string): boolean {
   if (isAdapterRunning()) return true;
   if (!existsSync(join(CLAW3D_INSTALL_DIR, "node_modules"))) return false;
 
@@ -933,8 +934,8 @@ export function startAdapter(): boolean {
     PATH: getEnhancedPath(),
     HOME: homedir(),
     TERM: "dumb",
-    HERMES_API_KEY: getApiServerKey(),
-    HERMES_API_URL: getApiUrl(),
+    HERMES_API_KEY: getApiServerKey(profile),
+    HERMES_API_URL: getApiUrl(profile),
     HERMES_AGENT_NAME: "ORION",
     CLAW3D_GATEWAY_ADAPTER_TYPE: "hermes",
     HERMES_ADAPTER_PORT: String(adapterPortFromWsUrl(getSavedWsUrl())),
@@ -1006,7 +1007,7 @@ export function stopAdapter(): void {
   cleanupPid(ADAPTER_PID_FILE);
 }
 
-export function startAll(): { success: boolean; error?: string } {
+export function startAll(profile?: string): { success: boolean; error?: string } {
   if (!existsSync(join(CLAW3D_INSTALL_DIR, "node_modules"))) {
     return {
       success: false,
@@ -1019,10 +1020,10 @@ export function startAll(): { success: boolean; error?: string } {
   // Refresh the `.env` before the processes read it, so Office always
   // starts against the current port/URL and the desktop's configured
   // model rather than a value frozen at first setup (issue #256).
-  writeClaw3dSettings();
+  writeClaw3dSettings(undefined, profile);
 
   // Start dev server
-  const devOk = startDevServer();
+  const devOk = startDevServer(profile);
   if (!devOk) {
     return {
       success: false,
@@ -1031,7 +1032,7 @@ export function startAll(): { success: boolean; error?: string } {
   }
 
   // Start adapter
-  const adapterOk = startAdapter();
+  const adapterOk = startAdapter(profile);
   if (!adapterOk) {
     return { success: false, error: "Failed to start Hermes adapter" };
   }

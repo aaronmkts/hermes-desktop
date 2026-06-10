@@ -63,8 +63,8 @@ function makeDeps(
     setSshRemoteApiKey: (key) => {
       calls.push(`setSshRemoteApiKey:${key}`);
     },
-    startClaw3dAll: () => {
-      calls.push("startClaw3dAll");
+    startClaw3dAll: (profile) => {
+      calls.push("startClaw3dAll:" + (profile ?? ""));
       return { success: true };
     },
     stopClaw3dAll: () => {
@@ -88,7 +88,7 @@ describe("startOfficeStack", () => {
     expect(result).toEqual({ success: true });
     expect(calls).toEqual([
       "startGateway:research",
-      "startClaw3dAll",
+      "startClaw3dAll:research",
       "waitForClaw3dReady",
     ]);
   });
@@ -101,7 +101,7 @@ describe("startOfficeStack", () => {
     const result = await startOfficeStack("research", deps);
 
     expect(result).toEqual({ success: true });
-    expect(calls).toEqual(["startClaw3dAll", "waitForClaw3dReady"]);
+    expect(calls).toEqual(["startClaw3dAll:research", "waitForClaw3dReady"]);
   });
 
   it("starts the SSH gateway and tunnel before Claw3D", async () => {
@@ -114,7 +114,7 @@ describe("startOfficeStack", () => {
       "sshStartGateway",
       "startSshTunnel",
       "setSshRemoteApiKey:remote-key",
-      "startClaw3dAll",
+      "startClaw3dAll:research",
       "waitForClaw3dReady",
     ]);
   });
@@ -136,7 +136,7 @@ describe("startOfficeStack", () => {
     });
     expect(calls).toEqual([
       "startGateway:research",
-      "startClaw3dAll",
+      "startClaw3dAll:research",
       "waitForClaw3dReady",
       "stopClaw3dAll",
     ]);
@@ -161,7 +161,7 @@ describe("startOfficeStack", () => {
       "sshStartGateway",
       "startSshTunnel",
       "setSshRemoteApiKey:remote-key",
-      "startClaw3dAll",
+      "startClaw3dAll:research",
       "waitForClaw3dReady",
       "stopClaw3dAll",
       "stopSshTunnel",
