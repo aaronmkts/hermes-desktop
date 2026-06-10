@@ -1,12 +1,16 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { X, Send, Bot } from "lucide-react";
 import type { OfficeAgent } from "./office3d/core/types";
 import { getOneChatSendState } from "./oneChatSendState";
+import { createOfficeCommandDispatcher, type ConfirmationRequirement, type OfficeCommandResult } from "./officeCommandDispatcher";
+import type { OfficeNavigationTarget } from "./officeActions";
 
 interface OneChatModalProps {
   open: boolean;
   onClose: () => void;
   agents: OfficeAgent[];
+  profile?: string;
+  onNavigate?: (target: OfficeNavigationTarget) => void;
 }
 
 interface ChatMessage {
@@ -14,12 +18,15 @@ interface ChatMessage {
   role: "user" | "agent";
   text: string;
   timestamp: number;
+  confirmation?: ConfirmationRequirement;
 }
 
 export default function OneChatModal({
   open,
   onClose,
   agents,
+  profile,
+  onNavigate,
 }: OneChatModalProps): React.JSX.Element | null {
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [input, setInput] = useState("");
@@ -27,6 +34,7 @@ export default function OneChatModal({
   const [loadingMap, setLoadingMap] = useState<Record<string, boolean>>({});
   const [visible, setVisible] = useState(open);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const commandDispatcher = useMemo(() => createOfficeCommandDispatcher({ api: window.hermesAPI, agents, profile }), [agents, profile]);
 
   const selectedAgent = agents.find((a) => a.id === selectedAgentId) ?? null;
 
@@ -109,6 +117,59 @@ export default function OneChatModal({
     isLoading: selectedAgentId ? (loadingMap[selectedAgentId] ?? false) : false,
   });
 
+
+  const appendAgentMessage = (agentId: string, text: string, confirmation?: ConfirmationRequirement): void => {
+    setMessages((prev) => {
+      const list = prev[agentId] ?? [];
+      return {
+        ...prev,
+        [agentId]: [
+          ...list,
+          { id: `cmd-${Date.now()}-${Math.random().toString(36).slice(2)}`, role: "agent", text, timestamp: Date.now(), ...(confirmation ? { confirmation } : {}) },
+        ],
+      };
+    });
+  };
+
+  const appendCommandResult = (agentId: string, result: OfficeCommandResult): void => {
+    if (result.type === "handled") {
+      appendAgentMessage(agentId, result.message);
+      if (result.navigate) onNavigate?.(result.navigate);
+      return;
+    }
+    if (result.type === "needsClarification" || result.type === "error") {
+      appendAgentMessage(agentId, result.message);
+      return;
+    }
+    if (result.type === "needsConfirmation") {
+      appendAgentMessage(agentId, `${result.confirmation.title} ${result.confirmation.message}`, result.confirmation);
+    }
+  };
+
+  const handleConfirmCommand = async (confirmationId: string): Promise<void> => {
+    if (!selectedAgentId) return;
+    const result = await commandDispatcher.confirmOfficeCommand(confirmationId);
+    setMessages((prev) => ({
+      ...prev,
+      [selectedAgentId]: (prev[selectedAgentId] ?? []).map((m) =>
+        m.confirmation?.id === confirmationId ? { ...m, confirmation: undefined } : m,
+      ),
+    }));
+    appendCommandResult(selectedAgentId, result);
+  };
+
+  const handleCancelCommand = async (confirmationId: string): Promise<void> => {
+    if (!selectedAgentId) return;
+    const result = await commandDispatcher.cancelOfficeCommand(confirmationId);
+    setMessages((prev) => ({
+      ...prev,
+      [selectedAgentId]: (prev[selectedAgentId] ?? []).map((m) =>
+        m.confirmation?.id === confirmationId ? { ...m, confirmation: undefined } : m,
+      ),
+    }));
+    appendCommandResult(selectedAgentId, result);
+  };
+
   const handleSend = async (): Promise<void> => {
     if (!sendState.canSend || !selectedAgentId) return;
     const text = input.trim();
@@ -133,6 +194,11 @@ export default function OneChatModal({
 
     setLoadingMap((prev) => ({ ...prev, [selectedAgentId]: true }));
     try {
+      const commandResult = await commandDispatcher.dispatchOfficeCommand(text);
+      if (commandResult.type !== "fallbackToChat") {
+        appendCommandResult(selectedAgentId, commandResult);
+        return;
+      }
       const sessionId = `office-${selectedAgentId}`;
       const history = (messages[selectedAgentId] ?? [])
         .filter((m) => m.role === "user" || m.role === "agent")
@@ -410,6 +476,26 @@ export default function OneChatModal({
                   }}
                 >
                   {msg.text}
+                  {msg.confirmation && (
+                    <div className="mt-3 flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void handleConfirmCommand(msg.confirmation!.id)}
+                        className="rounded px-3 py-1 text-xs font-semibold"
+                        style={{ background: msg.confirmation.danger ? "#dc2626" : "#2563eb", color: "#fff" }}
+                      >
+                        {msg.confirmation.confirmLabel}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleCancelCommand(msg.confirmation!.id)}
+                        className="rounded px-3 py-1 text-xs font-semibold"
+                        style={{ background: "rgba(255,255,255,0.12)", color: "rgba(255,255,255,0.9)" }}
+                      >
+                        {msg.confirmation.cancelLabel}
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             ))}

@@ -403,6 +403,8 @@ function Office({
           open={chatOpen}
           onClose={() => setChatOpen(false)}
           agents={positionedAgents}
+          profile={profile}
+          onNavigate={onNavigate}
         />
 
         {designMode && (
