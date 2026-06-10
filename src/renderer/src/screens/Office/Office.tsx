@@ -107,11 +107,48 @@ function Office({
   const [claw3dLoading, setClaw3dLoading] = useState(true);
   const [claw3dBusy, setClaw3dBusy] = useState<"setup" | "start" | null>(null);
   const [claw3dError, setClaw3dError] = useState<string | null>(null);
+  const [claw3dWebviewLoading, setClaw3dWebviewLoading] = useState(false);
+  const [claw3dWebviewError, setClaw3dWebviewError] = useState<string | null>(null);
   const [actionBusy, setActionBusy] = useState<string | null>(null);
   const [designMode, setDesignMode] = useState(false);
+  const claw3dWebviewRef = useRef<HTMLElement | null>(null);
 
 
   const supportsClaw3d = typeof window.hermesAPI.claw3dStatus === "function";
+
+  useEffect(() => {
+    if (!claw3dStatus?.running) {
+      setClaw3dWebviewLoading(false);
+      setClaw3dWebviewError(null);
+      return;
+    }
+    setClaw3dWebviewLoading(true);
+    setClaw3dWebviewError(null);
+  }, [claw3dStatus?.running, claw3dStatus?.port, claw3dStatus?.remoteUrl]);
+
+  const handleClaw3dWebviewLoad = useCallback(() => {
+    setClaw3dWebviewLoading(false);
+    setClaw3dWebviewError(null);
+  }, []);
+
+  const handleClaw3dWebviewFail = useCallback((event: unknown) => {
+    setClaw3dWebviewLoading(false);
+    const details = event as { errorDescription?: string; errorCode?: number };
+    const description = details.errorDescription || "Claw3D webview failed to load.";
+    const code = typeof details.errorCode === "number" ? ` (${details.errorCode})` : "";
+    setClaw3dWebviewError(`${description}${code}`);
+  }, []);
+
+  useEffect(() => {
+    const webview = claw3dWebviewRef.current;
+    if (!webview) return;
+    webview.addEventListener("did-finish-load", handleClaw3dWebviewLoad as EventListener);
+    webview.addEventListener("did-fail-load", handleClaw3dWebviewFail as EventListener);
+    return () => {
+      webview.removeEventListener("did-finish-load", handleClaw3dWebviewLoad as EventListener);
+      webview.removeEventListener("did-fail-load", handleClaw3dWebviewFail as EventListener);
+    };
+  }, [claw3dStatus?.running, claw3dStatus?.port, claw3dStatus?.remoteUrl, handleClaw3dWebviewFail, handleClaw3dWebviewLoad]);
 
   const loadClaw3dStatus = useCallback(async () => {
     if (!supportsClaw3d) return;
@@ -396,14 +433,31 @@ function Office({
                   <ExternalLink size={14} /> {t("office.openInBrowser")}
                 </a>
               </div>
-              {runtimeUrl.startsWith("http://127.0.0.1:") || runtimeUrl.startsWith("http://localhost:")
-                ? createElement("webview", {
-                    title: "Claw3D Studio runtime",
-                    src: runtimeUrl,
-                    partition: "persist:claw3d-office",
-                    style: { flex: 1, width: "100%", height: "100%", border: 0 },
-                  })
-                : <iframe title="Claw3D Studio runtime" src={runtimeUrl} style={{ flex: 1, width: "100%", border: 0 }} />}
+              <div className="office-content">
+                {runtimeUrl.startsWith("http://127.0.0.1:") || runtimeUrl.startsWith("http://localhost:")
+                  ? createElement("webview", {
+                      title: "Claw3D Studio runtime",
+                      src: runtimeUrl,
+                      partition: "persist:claw3d-office",
+                      ref: claw3dWebviewRef,
+                      style: { width: "100%", height: "100%", border: 0 },
+                    })
+                  : <iframe title="Claw3D Studio runtime" src={runtimeUrl} onLoad={handleClaw3dWebviewLoad} style={{ width: "100%", height: "100%", border: 0 }} />}
+                {claw3dWebviewLoading && (
+                  <div className="office-loading-overlay" role="status">
+                    Loading Claw3D Office…
+                  </div>
+                )}
+                {claw3dWebviewError && (
+                  <div className="office-loading-overlay" role="alert">
+                    <div className="office-webview-error">
+                      <p className="office-webview-error-title">Claw3D failed to render inside Hermes One</p>
+                      <p>{claw3dWebviewError}</p>
+                      <p>{runtimeUrl}</p>
+                    </div>
+                  </div>
+                )}
+              </div>
             </section>
           )}
         </main>
