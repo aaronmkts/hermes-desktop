@@ -7,6 +7,7 @@ import {
 } from "./layout";
 import {
   buildDefaultOfficeLayout,
+  getLayoutFurniture,
   layoutToWorkstations,
   type OfficeLayout,
   type OfficeLayoutItemId,
@@ -42,7 +43,7 @@ export function getOffice3DLayoutRenderState({
     ? layoutToWorkstations(layout, agentIds, ceoId)
     : buildWorkstations(agentIds, ceoId);
   const furniture = layout
-    ? resolvedLayout.furniture
+    ? getLayoutFurniture(resolvedLayout)
     : [...REST_FURNITURE, ...(ceoId ? EXECUTIVE_DECOR : [])];
   return {
     layout: resolvedLayout,
@@ -55,7 +56,7 @@ export function getOffice3DLayoutRenderState({
         }))
       : [],
     deskEditItems: editMode
-      ? resolvedLayout.desks.map((d) => ({
+      ? resolvedLayout.workstations.map((d) => ({
           itemId: `desk:${d.id}` as const,
           selected: selectedLayoutItemId === `desk:${d.id}`,
         }))

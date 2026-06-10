@@ -453,6 +453,7 @@ export default function Office3D({
     [agentIds, ceoId, layout, editMode, selectedLayoutItemId],
   );
   const { workstations, furniture } = renderState;
+  const selectLayoutItem = editMode ? onSelectLayoutItem : undefined;
 
   // Only the background follows the app's light/dark theme.
   const { resolved } = useTheme();
@@ -554,12 +555,12 @@ export default function Office3D({
         <Workstations
           workstations={workstations}
           selectedItemId={selectedLayoutItemId}
-          onSelectItem={onSelectLayoutItem ?? undefined}
+          onSelectItem={selectLayoutItem}
         />
         <FurniturePieces
           pieces={furniture}
           selectedItemId={selectedLayoutItemId}
-          onSelectItem={onSelectLayoutItem ?? undefined}
+          onSelectItem={selectLayoutItem}
         />
       </Suspense>
       <AgentsLayer

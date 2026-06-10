@@ -177,7 +177,7 @@ function Office({
     ceoId,
   });
   const selectedDesk = layoutDraft.selectedItemId?.startsWith("desk:")
-    ? (layoutDraft.layout.desks.find(
+    ? (layoutDraft.layout.workstations.find(
         (d) => `desk:${d.id}` === layoutDraft.selectedItemId,
       ) ?? null)
     : null;
