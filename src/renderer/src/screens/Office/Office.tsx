@@ -1,4 +1,11 @@
-import { createElement, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  createElement,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   ExternalLink,
   Move,
@@ -47,7 +54,8 @@ const claw3dPrimaryButtonStyle: React.CSSProperties = {
   padding: "10px 18px",
   borderRadius: 999,
   border: "1px solid rgba(56, 189, 248, 0.55)",
-  background: "linear-gradient(135deg, rgba(14,165,233,0.96), rgba(37,99,235,0.96))",
+  background:
+    "linear-gradient(135deg, rgba(14,165,233,0.96), rgba(37,99,235,0.96))",
   color: "#ffffff",
   cursor: "pointer",
   fontWeight: 700,
@@ -108,11 +116,12 @@ function Office({
   const [claw3dBusy, setClaw3dBusy] = useState<"setup" | "start" | null>(null);
   const [claw3dError, setClaw3dError] = useState<string | null>(null);
   const [claw3dWebviewLoading, setClaw3dWebviewLoading] = useState(false);
-  const [claw3dWebviewError, setClaw3dWebviewError] = useState<string | null>(null);
+  const [claw3dWebviewError, setClaw3dWebviewError] = useState<string | null>(
+    null,
+  );
   const [actionBusy, setActionBusy] = useState<string | null>(null);
   const [designMode, setDesignMode] = useState(false);
   const claw3dWebviewRef = useRef<HTMLElement | null>(null);
-
 
   const supportsClaw3d = typeof window.hermesAPI.claw3dStatus === "function";
 
@@ -134,21 +143,41 @@ function Office({
   const handleClaw3dWebviewFail = useCallback((event: unknown) => {
     setClaw3dWebviewLoading(false);
     const details = event as { errorDescription?: string; errorCode?: number };
-    const description = details.errorDescription || "Claw3D webview failed to load.";
-    const code = typeof details.errorCode === "number" ? ` (${details.errorCode})` : "";
+    const description =
+      details.errorDescription || "Claw3D webview failed to load.";
+    const code =
+      typeof details.errorCode === "number" ? ` (${details.errorCode})` : "";
     setClaw3dWebviewError(`${description}${code}`);
   }, []);
 
   useEffect(() => {
     const webview = claw3dWebviewRef.current;
     if (!webview) return;
-    webview.addEventListener("did-finish-load", handleClaw3dWebviewLoad as EventListener);
-    webview.addEventListener("did-fail-load", handleClaw3dWebviewFail as EventListener);
+    webview.addEventListener(
+      "did-finish-load",
+      handleClaw3dWebviewLoad as EventListener,
+    );
+    webview.addEventListener(
+      "did-fail-load",
+      handleClaw3dWebviewFail as EventListener,
+    );
     return () => {
-      webview.removeEventListener("did-finish-load", handleClaw3dWebviewLoad as EventListener);
-      webview.removeEventListener("did-fail-load", handleClaw3dWebviewFail as EventListener);
+      webview.removeEventListener(
+        "did-finish-load",
+        handleClaw3dWebviewLoad as EventListener,
+      );
+      webview.removeEventListener(
+        "did-fail-load",
+        handleClaw3dWebviewFail as EventListener,
+      );
     };
-  }, [claw3dStatus?.running, claw3dStatus?.port, claw3dStatus?.remoteUrl, handleClaw3dWebviewFail, handleClaw3dWebviewLoad]);
+  }, [
+    claw3dStatus?.running,
+    claw3dStatus?.port,
+    claw3dStatus?.remoteUrl,
+    handleClaw3dWebviewFail,
+    handleClaw3dWebviewLoad,
+  ]);
 
   const loadClaw3dStatus = useCallback(async () => {
     if (!supportsClaw3d) return;
@@ -184,7 +213,8 @@ function Office({
     setClaw3dError(null);
     try {
       const result = await window.hermesAPI.claw3dSetup();
-      if (!result.success) setClaw3dError(result.error ?? t("office.setupFailed"));
+      if (!result.success)
+        setClaw3dError(result.error ?? t("office.setupFailed"));
       await loadClaw3dStatus();
     } finally {
       setClaw3dBusy(null);
@@ -196,12 +226,18 @@ function Office({
     setClaw3dError(null);
     try {
       const result = await window.hermesAPI.claw3dStartAll(profile);
-      if (!result.success) setClaw3dError(result.error ?? t("office.startFailed"));
+      if (!result.success)
+        setClaw3dError(result.error ?? t("office.startFailed"));
       await loadClaw3dStatus();
     } finally {
       setClaw3dBusy(null);
     }
   }, [loadClaw3dStatus, profile, t]);
+
+  const handleOpenClaw3dBrowser = useCallback(async (url: string) => {
+    if (!url) return;
+    await window.hermesAPI.openExternal(url);
+  }, []);
 
   const setCeo = useCallback((id: string | null) => {
     setCeoId(id);
@@ -376,14 +412,24 @@ function Office({
     [loadOfficeStatus, onNavigate, onSelectProfile, selectedAgent],
   );
 
-
   if (supportsClaw3d) {
     const installed = Boolean(claw3dStatus?.cloned && claw3dStatus?.installed);
     const running = Boolean(claw3dStatus?.running);
-    const runtimeUrl = claw3dStatus?.remoteUrl || (claw3dStatus?.port ? `http://127.0.0.1:${claw3dStatus.port}/office` : "");
+    const runtimeUrl =
+      claw3dStatus?.remoteUrl ||
+      (claw3dStatus?.port
+        ? `http://127.0.0.1:${claw3dStatus.port}/office`
+        : "");
 
     return (
-      <div style={{ display: "flex", flexDirection: "column", height: "100%", width: "100%" }}>
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          height: "100%",
+          width: "100%",
+        }}
+      >
         <header
           style={{
             display: "flex",
@@ -395,54 +441,127 @@ function Office({
           }}
         >
           <div style={{ display: "flex", flexDirection: "column" }}>
-            <span style={{ fontWeight: 600, fontSize: 15 }}>{t("office.title")}</span>
-            <span style={{ fontSize: 12, opacity: 0.6 }}>{t("office.subtitle")}</span>
+            <span style={{ fontWeight: 600, fontSize: 15 }}>
+              {t("office.title")}
+            </span>
+            <span style={{ fontSize: 12, opacity: 0.6 }}>
+              {t("office.subtitle")}
+            </span>
           </div>
-          <button type="button" onClick={() => void loadClaw3dStatus()} disabled={claw3dLoading} title={t("office.refresh")} style={{ ...claw3dSecondaryButtonStyle, ...(claw3dLoading ? claw3dDisabledButtonStyle : {}) }}>
+          <button
+            type="button"
+            onClick={() => void loadClaw3dStatus()}
+            disabled={claw3dLoading}
+            title={t("office.refresh")}
+            style={{
+              ...claw3dSecondaryButtonStyle,
+              ...(claw3dLoading ? claw3dDisabledButtonStyle : {}),
+            }}
+          >
             <RefreshCw size={14} /> {t("office.refresh")}
           </button>
         </header>
 
-        <main style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", padding: running ? 0 : 24 }}>
+        <main
+          style={{
+            flex: 1,
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
+            padding: running ? 0 : 24,
+          }}
+        >
           {claw3dLoading && !claw3dStatus ? (
             <div role="status">{t("office.checkingStatus")}</div>
           ) : !installed ? (
-            <section aria-label="Claw3D setup" style={{ margin: "auto", maxWidth: 680, textAlign: "center" }}>
+            <section
+              aria-label="Claw3D setup"
+              style={{ margin: "auto", maxWidth: 680, textAlign: "center" }}
+            >
               <h2>{t("office.setupTitle")}</h2>
               <p>{t("office.setupDesc1")}</p>
               <p>{t("office.setupDesc2")}</p>
               {claw3dError && <p role="alert">{claw3dError}</p>}
-              <button type="button" onClick={() => void handleClaw3dSetup()} disabled={claw3dBusy !== null} style={{ ...claw3dPrimaryButtonStyle, ...(claw3dBusy !== null ? claw3dDisabledButtonStyle : {}) }}>
-                {claw3dBusy === "setup" ? t("office.starting") : t("office.installClaw3d")}
+              <button
+                type="button"
+                onClick={() => void handleClaw3dSetup()}
+                disabled={claw3dBusy !== null}
+                style={{
+                  ...claw3dPrimaryButtonStyle,
+                  ...(claw3dBusy !== null ? claw3dDisabledButtonStyle : {}),
+                }}
+              >
+                {claw3dBusy === "setup"
+                  ? t("office.starting")
+                  : t("office.installClaw3d")}
               </button>
             </section>
           ) : !running ? (
-            <section aria-label="Claw3D start" style={{ margin: "auto", maxWidth: 680, textAlign: "center" }}>
+            <section
+              aria-label="Claw3D start"
+              style={{ margin: "auto", maxWidth: 680, textAlign: "center" }}
+            >
               <h2>{t("office.loadingClaw3d")}</h2>
               <p>{t("office.clickToStart")}</p>
               {claw3dError && <p role="alert">{claw3dError}</p>}
-              <button type="button" onClick={() => void handleClaw3dStart()} disabled={claw3dBusy !== null} style={{ ...claw3dPrimaryButtonStyle, ...(claw3dBusy !== null ? claw3dDisabledButtonStyle : {}) }}>
+              <button
+                type="button"
+                onClick={() => void handleClaw3dStart()}
+                disabled={claw3dBusy !== null}
+                style={{
+                  ...claw3dPrimaryButtonStyle,
+                  ...(claw3dBusy !== null ? claw3dDisabledButtonStyle : {}),
+                }}
+              >
                 {claw3dBusy === "start" ? t("office.starting") : "Start"}
               </button>
             </section>
           ) : (
-            <section aria-label="Claw3D runtime" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 12px", borderBottom: "1px solid var(--border, rgba(0,0,0,0.08))" }}>
+            <section
+              aria-label="Claw3D runtime"
+              style={{
+                flex: 1,
+                minHeight: 0,
+                display: "flex",
+                flexDirection: "column",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  padding: "8px 12px",
+                  borderBottom: "1px solid var(--border, rgba(0,0,0,0.08))",
+                }}
+              >
                 <span>{runtimeUrl}</span>
-                <a href={runtimeUrl} target="_blank" rel="noreferrer">
+                <button
+                  type="button"
+                  onClick={() => void handleOpenClaw3dBrowser(runtimeUrl)}
+                  style={{ ...claw3dSecondaryButtonStyle, padding: "6px 10px" }}
+                >
                   <ExternalLink size={14} /> {t("office.openInBrowser")}
-                </a>
+                </button>
               </div>
               <div className="office-content">
-                {runtimeUrl.startsWith("http://127.0.0.1:") || runtimeUrl.startsWith("http://localhost:")
-                  ? createElement("webview", {
-                      title: "Claw3D Studio runtime",
-                      src: runtimeUrl,
-                      partition: "persist:claw3d-office",
-                      ref: claw3dWebviewRef,
-                      style: { width: "100%", height: "100%", border: 0 },
-                    })
-                  : <iframe title="Claw3D Studio runtime" src={runtimeUrl} onLoad={handleClaw3dWebviewLoad} style={{ width: "100%", height: "100%", border: 0 }} />}
+                {runtimeUrl.startsWith("http://127.0.0.1:") ||
+                runtimeUrl.startsWith("http://localhost:") ? (
+                  createElement("webview", {
+                    title: "Claw3D Studio runtime",
+                    src: runtimeUrl,
+                    partition: "persist:claw3d-office",
+                    ref: claw3dWebviewRef,
+                    style: { width: "100%", height: "100%", border: 0 },
+                  })
+                ) : (
+                  <iframe
+                    title="Claw3D Studio runtime"
+                    src={runtimeUrl}
+                    onLoad={handleClaw3dWebviewLoad}
+                    style={{ width: "100%", height: "100%", border: 0 }}
+                  />
+                )}
                 {claw3dWebviewLoading && (
                   <div className="office-loading-overlay" role="status">
                     Loading Claw3D Office…
@@ -451,7 +570,9 @@ function Office({
                 {claw3dWebviewError && (
                   <div className="office-loading-overlay" role="alert">
                     <div className="office-webview-error">
-                      <p className="office-webview-error-title">Claw3D failed to render inside Hermes One</p>
+                      <p className="office-webview-error-title">
+                        Claw3D failed to render inside Hermes One
+                      </p>
                       <p>{claw3dWebviewError}</p>
                       <p>{runtimeUrl}</p>
                     </div>

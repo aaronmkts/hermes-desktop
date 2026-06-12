@@ -1,7 +1,10 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import officeCopy from "../../../../shared/i18n/locales/en/office";
-import { getOfficeExperienceCopy, OFFICE_EXPERIENCE_BOUNDARY } from "../../../../shared/office-boundary";
+import {
+  getOfficeExperienceCopy,
+  OFFICE_EXPERIENCE_BOUNDARY,
+} from "../../../../shared/office-boundary";
 
 vi.mock("../../components/useI18n", () => ({
   useI18n: () => ({
@@ -13,7 +16,8 @@ vi.mock("../../components/useI18n", () => ({
         refresh: "Refresh",
         setupTitle: "Install Claw3D Studio",
         setupDesc1: "Clone and install Claw3D Studio for the Office workspace.",
-        setupDesc2: "Hermes connects to the VPS backend through the existing SSH gateway token flow.",
+        setupDesc2:
+          "Hermes connects to the VPS backend through the existing SSH gateway token flow.",
         installClaw3d: "Install Claw3D",
         starting: "Starting...",
         clickToStart: "Click Start to open Claw3D Studio",
@@ -28,7 +32,9 @@ vi.mock("../../components/useI18n", () => ({
   }),
 }));
 
-vi.mock("./office3d/Office3D", () => ({ default: () => <div data-testid="office-3d" /> }));
+vi.mock("./office3d/Office3D", () => ({
+  default: () => <div data-testid="office-3d" />,
+}));
 vi.mock("./OneChatModal", () => ({ default: () => null }));
 
 import Office from "./Office";
@@ -58,6 +64,7 @@ function renderOffice(clawStatus: ClawStatus) {
     claw3dStopAll: vi.fn().mockResolvedValue(true),
     claw3dGetLogs: vi.fn().mockResolvedValue(""),
     getOfficeStatus: vi.fn(),
+    openExternal: vi.fn().mockResolvedValue(undefined),
   };
   return render(<Office visible profile="default" />);
 }
@@ -70,60 +77,132 @@ describe("Office Claw3D launcher", () => {
   it("renders an install/setup Claw3D call-to-action when Claw3D is missing", async () => {
     renderOffice(status({ cloned: false, installed: false }));
 
-    expect(await screen.findByRole("heading", { name: /install claw3d studio/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /install claw3d/i })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: /install claw3d studio/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /install claw3d/i }),
+    ).toBeInTheDocument();
     expect(screen.queryByTestId("office-3d")).not.toBeInTheDocument();
   });
 
   it("clicking install calls claw3dSetup", async () => {
     renderOffice(status({ cloned: false, installed: false }));
 
-    fireEvent.click(await screen.findByRole("button", { name: /install claw3d/i }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: /install claw3d/i }),
+    );
 
-    await waitFor(() => expect(window.hermesAPI.claw3dSetup).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(window.hermesAPI.claw3dSetup).toHaveBeenCalledTimes(1),
+    );
   });
 
   it("shows Start when installed but not running and starts Claw3D with the selected profile", async () => {
     renderOffice(status({ cloned: true, installed: true, running: false }));
 
     const start = await screen.findByRole("button", { name: /^start$/i });
-    await waitFor(() => expect(window.hermesAPI.claw3dStatus).toHaveBeenCalledWith("default"));
-    expect(screen.getByRole("heading", { name: /claw3d studio is ready/i })).toBeInTheDocument();
-    expect(screen.getByText(/click start to open claw3d studio/i)).toBeInTheDocument();
+    await waitFor(() =>
+      expect(window.hermesAPI.claw3dStatus).toHaveBeenCalledWith("default"),
+    );
+    expect(
+      screen.getByRole("heading", { name: /claw3d studio is ready/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/click start to open claw3d studio/i),
+    ).toBeInTheDocument();
     expect(start).toHaveStyle({ display: "inline-flex" });
     expect(start).toHaveStyle({ cursor: "pointer" });
     expect(start).toHaveStyle({ borderRadius: "999px" });
     fireEvent.click(start);
 
-    await waitFor(() => expect(window.hermesAPI.claw3dStartAll).toHaveBeenCalledWith("default"));
+    await waitFor(() =>
+      expect(window.hermesAPI.claw3dStartAll).toHaveBeenCalledWith("default"),
+    );
   });
 
   it("keeps Start clickable when the Claw3D port is already in use so launcher can recover or report an error", async () => {
-    renderOffice(status({ cloned: true, installed: true, running: false, portInUse: true }));
+    renderOffice(
+      status({
+        cloned: true,
+        installed: true,
+        running: false,
+        portInUse: true,
+      }),
+    );
 
     const start = await screen.findByRole("button", { name: /^start$/i });
     expect(start).toBeEnabled();
     fireEvent.click(start);
 
-    await waitFor(() => expect(window.hermesAPI.claw3dStartAll).toHaveBeenCalledWith("default"));
+    await waitFor(() =>
+      expect(window.hermesAPI.claw3dStartAll).toHaveBeenCalledWith("default"),
+    );
   });
 
   it("embeds the Claw3D Studio runtime using remoteUrl when running", async () => {
-    renderOffice(status({ cloned: true, installed: true, running: true, port: 5178, remoteUrl: "https://office.example.invalid/session" }));
+    renderOffice(
+      status({
+        cloned: true,
+        installed: true,
+        running: true,
+        port: 5178,
+        remoteUrl: "https://office.example.invalid/session",
+      }),
+    );
 
     const frame = await screen.findByTitle(/claw3d studio runtime/i);
-    expect(frame).toHaveAttribute("src", "https://office.example.invalid/session");
-    expect(screen.getByRole("link", { name: /open in browser/i })).toHaveAttribute("href", "https://office.example.invalid/session");
+    expect(frame).toHaveAttribute(
+      "src",
+      "https://office.example.invalid/session",
+    );
+    fireEvent.click(screen.getByRole("button", { name: /open in browser/i }));
+    await waitFor(() =>
+      expect(window.hermesAPI.openExternal).toHaveBeenCalledWith(
+        "https://office.example.invalid/session",
+      ),
+    );
   });
 
+  it("opens the running Claw3D Office route through the main-process external URL helper", async () => {
+    renderOffice(
+      status({
+        cloned: true,
+        installed: true,
+        running: true,
+        port: 5199,
+        remoteUrl: null,
+      }),
+    );
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: /open in browser/i }),
+    );
+
+    await waitFor(() =>
+      expect(window.hermesAPI.openExternal).toHaveBeenCalledWith(
+        "http://127.0.0.1:5199/office",
+      ),
+    );
+  });
   it("falls back to the local Claw3D Office route in an Electron webview", async () => {
-    renderOffice(status({ cloned: true, installed: true, running: true, port: 5199, remoteUrl: null }));
+    renderOffice(
+      status({
+        cloned: true,
+        installed: true,
+        running: true,
+        port: 5199,
+        remoteUrl: null,
+      }),
+    );
 
     const frame = await screen.findByTitle(/claw3d studio runtime/i);
     expect(frame.tagName.toLowerCase()).toBe("webview");
     expect(frame).toHaveAttribute("src", "http://127.0.0.1:5199/office");
     expect(frame).toHaveAttribute("partition", "persist:claw3d-office");
-    expect(screen.getByRole("link", { name: /open in browser/i })).toHaveAttribute("href", "http://127.0.0.1:5199/office");
+    expect(
+      screen.getByRole("button", { name: /open in browser/i }),
+    ).toBeEnabled();
   });
 });
 
@@ -140,7 +219,9 @@ describe("Office Claw3D copy", () => {
       ...Object.values(getOfficeExperienceCopy()),
     ].join("\n");
 
-    expect(combined).not.toMatch(/optional advanced legacy|advanced, legacy|does not install|without installing external claw3d|not implemented/i);
+    expect(combined).not.toMatch(
+      /optional advanced legacy|advanced, legacy|does not install|without installing external claw3d|not implemented/i,
+    );
     expect(combined).toMatch(/install|clone|start/i);
   });
 });
