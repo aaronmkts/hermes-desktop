@@ -78,8 +78,12 @@ describe("buildOfficeEnv (issue #256)", () => {
   });
 
   it("normalizes the previous Hermes One 18989 adapter URL to Claw3D's documented 18789 URL", () => {
-    expect(normalizeClaw3dWsUrl("ws://localhost:18989")).toBe("ws://localhost:18789");
-    expect(normalizeClaw3dWsUrl("ws://127.0.0.1:18989")).toBe("ws://localhost:18789");
+    expect(normalizeClaw3dWsUrl("ws://localhost:18989")).toBe(
+      "ws://localhost:18789",
+    );
+    expect(normalizeClaw3dWsUrl("ws://127.0.0.1:18989")).toBe(
+      "ws://localhost:18789",
+    );
   });
 
   it("defaults to the Claw3D-documented Hermes adapter URL and port", () => {
@@ -155,6 +159,15 @@ describe("resolveClaw3dReadyProbeTargets", () => {
       requireAdapter: true,
     });
   });
+});
+
+it("does not probe or expose SSH host Claw3D URLs; Studio and adapter stay local", () => {
+  const source = readFileSync(
+    join(process.cwd(), "src/main/claw3d.ts"),
+    "utf-8",
+  );
+  expect(source).not.toContain("http://${conn.ssh.host}:${port}");
+  expect(source).not.toContain('remoteSource: remoteUrl ? "ssh" : null');
 });
 
 describe("buildOfficeSettings", () => {
@@ -336,12 +349,12 @@ describe("writeOfficeFileIfChanged", () => {
     const dir = mkdtempSync(join(tmpdir(), "hermes-office-write-"));
     try {
       const file = join(dir, "settings.json");
-      writeFileSync(file, "{\"adapter\":\"openclaw\"}", "utf-8");
+      writeFileSync(file, '{"adapter":"openclaw"}', "utf-8");
 
-      const wrote = writeOfficeFileIfChanged(file, "{\"adapter\":\"hermes\"}");
+      const wrote = writeOfficeFileIfChanged(file, '{"adapter":"hermes"}');
 
       expect(wrote).toBe(true);
-      expect(readFileSync(file, "utf-8")).toBe("{\"adapter\":\"hermes\"}");
+      expect(readFileSync(file, "utf-8")).toBe('{"adapter":"hermes"}');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

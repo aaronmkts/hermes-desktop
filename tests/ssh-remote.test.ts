@@ -368,7 +368,10 @@ describe("ssh tools and skills visibility", () => {
         JSON.stringify({
           gateway_state: "running",
           platforms: {
-            telegram: { state: "connected", updated_at: "2026-06-09T10:00:00Z" },
+            telegram: {
+              state: "connected",
+              updated_at: "2026-06-09T10:00:00Z",
+            },
             homeassistant: { state: "error", error_message: "token rejected" },
             webhook: { state: "connected" },
           },
@@ -396,7 +399,9 @@ describe("ssh tools and skills visibility", () => {
         }),
       );
 
-      await expect(sshReadGatewayPlatformStates(sshConfig)).resolves.toEqual({});
+      await expect(sshReadGatewayPlatformStates(sshConfig)).resolves.toEqual(
+        {},
+      );
     }),
   );
 
@@ -406,7 +411,9 @@ describe("ssh tools and skills visibility", () => {
       mkdirSync(join(remoteHome, ".hermes"), { recursive: true });
       writeFileSync(
         join(remoteHome, ".hermes", "auth.json"),
-        JSON.stringify({ credential_pool: { "openai-codex": [{ access_token: "tok" }] } }),
+        JSON.stringify({
+          credential_pool: { "openai-codex": [{ access_token: "tok" }] },
+        }),
       );
 
       const before = await sshGetCredentialPool(sshConfig);
@@ -432,14 +439,19 @@ describe("ssh tools and skills visibility", () => {
       mkdirSync(join(remoteHome, ".hermes"), { recursive: true });
       writeFileSync(
         join(remoteHome, ".hermes", "auth.json"),
-        JSON.stringify({ credential_pool: { "openai-codex": [{ access_token: "tok" }] } }),
+        JSON.stringify({
+          credential_pool: { "openai-codex": [{ access_token: "tok" }] },
+        }),
       );
       writeFileSync(
         join(remoteHome, ".hermes", "honcho.json"),
         JSON.stringify({ apiKey: "honcho-secret" }),
       );
 
-      const codex = await sshGetProviderCredentialStatus(sshConfig, "openai-codex");
+      const codex = await sshGetProviderCredentialStatus(
+        sshConfig,
+        "openai-codex",
+      );
       expect(codex).toMatchObject({ configured: true, source: "auth.json" });
       expect(JSON.stringify(codex)).not.toContain("tok");
 
@@ -555,7 +567,6 @@ describe("ssh tools and skills visibility", () => {
     }),
   );
 
-
   it(
     "falls back to remote profile filesystem removal when skill uninstall CLI fails",
     withFakeSshRemote(async (remoteHome) => {
@@ -596,6 +607,49 @@ describe("ssh tools and skills visibility", () => {
       expect(existsSync(skillDir)).toBe(false);
       expect(readFileSync(join(remoteHome, "hermes-args.txt"), "utf-8")).toBe(
         "-p\nwork\nskills\nuninstall\nquote's skill\n--yes\n",
+      );
+    }),
+  );
+
+  it(
+    "falls back to direct remote profile skill directory removal when skill uninstall CLI fails",
+    withFakeSshRemote(async (remoteHome) => {
+      const localBin = join(remoteHome, ".local", "bin");
+      mkdirSync(localBin, { recursive: true });
+      const hermes = join(localBin, "hermes");
+      writeFileSync(
+        hermes,
+        [
+          "#!/usr/bin/env bash",
+          'printf "%s\\n" "$@" > "$HOME/hermes-args.txt"',
+          'printf "SSH command failed\\n" >&2',
+          "exit 1",
+          "",
+        ].join("\n"),
+      );
+      chmodSync(hermes, 0o755);
+
+      const skillDir = join(
+        remoteHome,
+        ".hermes",
+        "profiles",
+        "work",
+        "skills",
+        "direct-skill",
+      );
+      mkdirSync(skillDir, { recursive: true });
+      writeFileSync(
+        join(skillDir, "SKILL.md"),
+        "---\nname: Direct Skill\ndescription: remote\n---\n# Remote\n",
+      );
+
+      await expect(
+        sshUninstallSkill(sshConfig, "Direct Skill", "work"),
+      ).resolves.toEqual({ success: true });
+
+      expect(existsSync(skillDir)).toBe(false);
+      expect(readFileSync(join(remoteHome, "hermes-args.txt"), "utf-8")).toBe(
+        "-p\nwork\nskills\nuninstall\nDirect Skill\n--yes\n",
       );
     }),
   );

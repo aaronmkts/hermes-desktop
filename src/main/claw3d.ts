@@ -12,7 +12,12 @@ import { homedir } from "os";
 import { createConnection } from "net";
 import { getEnhancedPath, HERMES_HOME } from "./installer";
 import { stripAnsi, safeWriteFile } from "./utils";
-import { getApiServerKey, getConnectionConfig, getModelConfig, type ConnectionConfig } from "./config";
+import {
+  getApiServerKey,
+  getConnectionConfig,
+  getModelConfig,
+  type ConnectionConfig,
+} from "./config";
 import { getApiUrl } from "./hermes";
 import http from "http";
 
@@ -355,7 +360,10 @@ export function buildOfficeSettings(
   };
 }
 
-export function writeOfficeFileIfChanged(filePath: string, content: string): boolean {
+export function writeOfficeFileIfChanged(
+  filePath: string,
+  content: string,
+): boolean {
   try {
     if (existsSync(filePath) && readFileSync(filePath, "utf-8") === content) {
       return false;
@@ -528,7 +536,11 @@ export function isClaw3dOfficeHtml(body: string): boolean {
   return html.includes("claw3d") || html.includes("/_next/static/");
 }
 
-function probeHttpBody(url: string, timeoutMs = 1500, maxBytes = 64_000): Promise<{ statusCode: number | null; body: string }> {
+function probeHttpBody(
+  url: string,
+  timeoutMs = 1500,
+  maxBytes = 64_000,
+): Promise<{ statusCode: number | null; body: string }> {
   return new Promise((resolve) => {
     const req = http.request(
       url,
@@ -537,9 +549,12 @@ function probeHttpBody(url: string, timeoutMs = 1500, maxBytes = 64_000): Promis
         let body = "";
         res.setEncoding("utf8");
         res.on("data", (chunk: string) => {
-          if (body.length < maxBytes) body += chunk.slice(0, maxBytes - body.length);
+          if (body.length < maxBytes)
+            body += chunk.slice(0, maxBytes - body.length);
         });
-        res.on("end", () => resolve({ statusCode: res.statusCode ?? null, body }));
+        res.on("end", () =>
+          resolve({ statusCode: res.statusCode ?? null, body }),
+        );
       },
     );
     req.on("error", () => resolve({ statusCode: null, body: "" }));
@@ -551,9 +566,15 @@ function probeHttpBody(url: string, timeoutMs = 1500, maxBytes = 64_000): Promis
   });
 }
 
-async function probeClaw3dOffice(url: string, timeoutMs = 1500): Promise<boolean> {
+async function probeClaw3dOffice(
+  url: string,
+  timeoutMs = 1500,
+): Promise<boolean> {
   const result = await probeHttpBody(url, timeoutMs);
-  return isClaw3dOfficeStatusReady(result.statusCode) && isClaw3dOfficeHtml(result.body);
+  return (
+    isClaw3dOfficeStatusReady(result.statusCode) &&
+    isClaw3dOfficeHtml(result.body)
+  );
 }
 
 export interface Claw3dReadyProbeTargets {
@@ -594,9 +615,16 @@ export async function waitForClaw3dReady(
   const deadline = Date.now() + timeoutMs;
 
   while (Date.now() < deadline) {
-    const officeReady = await probeClaw3dOffice(targets.officeUrl, Math.min(intervalMs, 2000));
+    const officeReady = await probeClaw3dOffice(
+      targets.officeUrl,
+      Math.min(intervalMs, 2000),
+    );
     const adapterReady = targets.requireAdapter
-      ? await probeTcp(targets.adapterPort, targets.adapterHost, Math.min(intervalMs, 2000))
+      ? await probeTcp(
+          targets.adapterPort,
+          targets.adapterHost,
+          Math.min(intervalMs, 2000),
+        )
       : true;
 
     if (officeReady && adapterReady) {
@@ -609,10 +637,13 @@ export async function waitForClaw3dReady(
 }
 
 export async function getClaw3dStatus(profile?: string): Promise<Claw3dStatus> {
-  const packageJsonExists = existsSync(join(CLAW3D_INSTALL_DIR, "package.json"));
+  const packageJsonExists = existsSync(
+    join(CLAW3D_INSTALL_DIR, "package.json"),
+  );
   const refreshNeeded = needsClaw3dCheckoutRefresh();
   const cloned = packageJsonExists && !refreshNeeded;
-  const installed = cloned && existsSync(join(CLAW3D_INSTALL_DIR, "node_modules"));
+  const installed =
+    cloned && existsSync(join(CLAW3D_INSTALL_DIR, "node_modules"));
   if (installed) {
     writeClaw3dSettings(undefined, profile);
   }
@@ -623,31 +654,24 @@ export async function getClaw3dStatus(profile?: string): Promise<Claw3dStatus> {
   const adapterUp = isAdapterRunning();
   const error = devServerError || adapterError;
 
-  // SSH tunnel mode: probe the remote host for a Claw3D
-  // service. The official systemd unit binds Next.js to :3000 by default,
-  // so we try the SSH host at the saved Claw3D port. When reachable, the
-  // renderer can point its webview at it instead of asking the user to
-  // install Claw3D locally.
-  let remoteUrl: string | null = null;
-  const conn = getConnectionConfig();
-  if (conn.mode === "ssh" && conn.ssh?.host) {
-    const candidateUrl = `http://${conn.ssh.host}:${port}`;
-    const reachable = await probeClaw3dOffice(`${candidateUrl}/office`, 1500);
-    if (reachable) remoteUrl = candidateUrl;
-  }
+  // Claw3D Studio and the Hermes adapter are desktop-side processes. SSH mode
+  // only changes the Hermes API backend; the adapter reaches it through the
+  // desktop SSH tunnel. Do not expose or embed http://<ssh-host>:<port>, which
+  // can be an unrelated remote service and leads to blank/wrong Office pages.
+  const remoteUrl: string | null = null;
 
   return {
     cloned,
-    installed: installed || Boolean(remoteUrl),
+    installed,
     devServerRunning: devRunning,
     adapterRunning: adapterUp,
-    running: (devRunning && adapterUp) || Boolean(remoteUrl),
+    running: devRunning && adapterUp,
     port,
     portInUse,
     wsUrl: getSavedWsUrl(),
     error,
     remoteUrl,
-    remoteSource: remoteUrl ? "ssh" : null,
+    remoteSource: null,
   };
 }
 
@@ -758,7 +782,9 @@ export async function setupClaw3d(
   const git = resolveCommand("git", env.PATH);
 
   // Step 1: Clone (or pull if already cloned)
-  const cloned = existsSync(join(CLAW3D_INSTALL_DIR, "package.json")) && !needsClaw3dCheckoutRefresh();
+  const cloned =
+    existsSync(join(CLAW3D_INSTALL_DIR, "package.json")) &&
+    !needsClaw3dCheckoutRefresh();
 
   if (!cloned) {
     if (existsSync(CLAW3D_INSTALL_DIR)) {
@@ -872,13 +898,15 @@ export async function setupClaw3d(
   writeClaw3dSettings();
 }
 
-
-
-export function hasClaw3dOfficeRoute(fileExists: (relativePath: string) => boolean): boolean {
+export function hasClaw3dOfficeRoute(
+  fileExists: (relativePath: string) => boolean,
+): boolean {
   return fileExists("src/app/office/page.tsx");
 }
 
-export function shouldRefreshClaw3dCheckout(fileExists: (relativePath: string) => boolean): boolean {
+export function shouldRefreshClaw3dCheckout(
+  fileExists: (relativePath: string) => boolean,
+): boolean {
   return fileExists("package.json") && !hasClaw3dOfficeRoute(fileExists);
 }
 
@@ -889,7 +917,6 @@ function claw3dPathExists(relativePath: string): boolean {
 function needsClaw3dCheckoutRefresh(): boolean {
   return shouldRefreshClaw3dCheckout(claw3dPathExists);
 }
-
 
 export function chooseClaw3dPort(
   savedPort: number,
@@ -928,7 +955,10 @@ function resolveClaw3dLaunchPort(): number {
 }
 
 export function patchNextConfigForEmbedding(content: string): string {
-  let patched = content.replace(/"frame-ancestors [^"]*"/g, '"frame-ancestors *"');
+  let patched = content.replace(
+    /"frame-ancestors [^"]*"/g,
+    '"frame-ancestors *"',
+  );
   patched = patched.replace(
     /\n\s*\{\s*key:\s*"X-Frame-Options",\s*value:\s*"SAMEORIGIN",\s*\},/g,
     "",
@@ -1145,11 +1175,15 @@ export function stopAdapter(): void {
   cleanupPid(ADAPTER_PID_FILE);
 }
 
-export function startAll(profile?: string): { success: boolean; error?: string } {
+export function startAll(profile?: string): {
+  success: boolean;
+  error?: string;
+} {
   if (needsClaw3dCheckoutRefresh()) {
     return {
       success: false,
-      error: "Claw3D checkout is outdated. Please reinstall Claw3D from Office first.",
+      error:
+        "Claw3D checkout is outdated. Please reinstall Claw3D from Office first.",
     };
   }
 

@@ -32,7 +32,12 @@ import { t } from "../shared/i18n";
 import { getAppLocale } from "./locale";
 import { HIDDEN_SUBPROCESS_OPTIONS } from "./process-options";
 import { canonicalProviderBaseUrl } from "./provider-registry";
-import { buildCredentialPoolEntry, upsertBlockChild, type CredentialEntry, type ProviderCredentialStatus } from "./config";
+import {
+  buildCredentialPoolEntry,
+  upsertBlockChild,
+  type CredentialEntry,
+  type ProviderCredentialStatus,
+} from "./config";
 import {
   isValidNamedProfileName,
   isValidProfileName,
@@ -349,36 +354,52 @@ profile = payload.get("profile", "")
 home = os.path.expanduser("~")
 skills_dir = os.path.join(home, ".hermes", "profiles", profile, "skills") if profile and profile != "default" else os.path.join(home, ".hermes", "skills")
 removed = False
+
+def skill_name_for(entry_path, fallback):
+    skill_file = os.path.join(entry_path, "SKILL.md")
+    if not os.path.isfile(skill_file):
+        return None
+    skill_name = fallback
+    try:
+        with open(skill_file, "r", encoding="utf-8") as f:
+            lines = f.read(4000).splitlines()
+        in_fm = False
+        for line in lines:
+            if line.strip() == "---":
+                if not in_fm:
+                    in_fm = True
+                    continue
+                break
+            if in_fm and line.strip().startswith("name:"):
+                skill_name = line.split(":", 1)[1].strip().strip('"').strip("'")
+                break
+    except Exception:
+        pass
+    return skill_name
+
+
+def maybe_remove(entry_path, fallback):
+    skill_name = skill_name_for(entry_path, fallback)
+    if skill_name is None:
+        return False
+    if skill_name == name or fallback == name:
+        shutil.rmtree(entry_path)
+        return True
+    return False
+
 if os.path.isdir(skills_dir):
-    for cat in os.listdir(skills_dir):
-        cat_path = os.path.join(skills_dir, cat)
-        if not os.path.isdir(cat_path):
+    for entry in os.listdir(skills_dir):
+        entry_path = os.path.join(skills_dir, entry)
+        if not os.path.isdir(entry_path):
             continue
-        for entry in os.listdir(cat_path):
-            entry_path = os.path.join(cat_path, entry)
-            if not os.path.isdir(entry_path):
-                continue
-            skill_file = os.path.join(entry_path, "SKILL.md")
-            if not os.path.isfile(skill_file):
-                continue
-            skill_name = entry
-            try:
-                with open(skill_file, "r", encoding="utf-8") as f:
-                    lines = f.read(4000).splitlines()
-                in_fm = False
-                for line in lines:
-                    if line.strip() == "---":
-                        if not in_fm:
-                            in_fm = True
-                            continue
-                        break
-                    if in_fm and line.strip().startswith("name:"):
-                        skill_name = line.split(":", 1)[1].strip().strip('"').strip("'")
-                        break
-            except Exception:
-                pass
-            if skill_name == name or entry == name:
-                shutil.rmtree(entry_path)
+        # Direct profile/default skill layout: skills/<skill>/SKILL.md
+        if maybe_remove(entry_path, entry):
+            removed = True
+            break
+        # Categorised layout: skills/<category>/<skill>/SKILL.md
+        for child in os.listdir(entry_path):
+            child_path = os.path.join(entry_path, child)
+            if os.path.isdir(child_path) and maybe_remove(child_path, child):
                 removed = True
                 break
         if removed:
@@ -833,7 +854,6 @@ async function sshSetPlatformToolsetEnabled(
   }
 }
 
-
 function remoteGatewayStatePath(profile?: string): string {
   return `${remoteHermesHomeTilde(profile)}/gateway_state.json`;
 }
@@ -863,7 +883,9 @@ export async function sshReadGatewayPlatformStates(
     for (const [platform, state] of Object.entries(platforms)) {
       result[platform] = state;
     }
-    for (const [desktopKey, stateKey] of Object.entries(REMOTE_PLATFORM_STATE_KEY)) {
+    for (const [desktopKey, stateKey] of Object.entries(
+      REMOTE_PLATFORM_STATE_KEY,
+    )) {
       if (platforms[stateKey] && !result[desktopKey]) {
         result[desktopKey] = platforms[stateKey];
       }
@@ -1258,12 +1280,14 @@ function authStoreHasProviderCredentials(
     : false;
 }
 
-
 function remoteHonchoPath(profile?: string): string {
   return `${remoteHermesHome(profile)}/honcho.json`;
 }
 
-async function sshReadAuthStore(config: SshConfig, profile?: string): Promise<Record<string, unknown>> {
+async function sshReadAuthStore(
+  config: SshConfig,
+  profile?: string,
+): Promise<Record<string, unknown>> {
   const raw = await sshReadFile(config, sshAuthPath(profile));
   if (!raw.trim()) return {};
   try {
@@ -1278,7 +1302,11 @@ async function sshWriteAuthStore(
   store: Record<string, unknown>,
   profile?: string,
 ): Promise<void> {
-  await sshWriteFile(config, sshAuthPath(profile), JSON.stringify(store, null, 2));
+  await sshWriteFile(
+    config,
+    sshAuthPath(profile),
+    JSON.stringify(store, null, 2),
+  );
 }
 
 export async function sshGetCredentialPool(
@@ -1302,7 +1330,8 @@ export async function sshSetCredentialPool(
   if (!store.credential_pool || typeof store.credential_pool !== "object") {
     store.credential_pool = {};
   }
-  (store.credential_pool as Record<string, CredentialEntry[]>)[provider] = entries;
+  (store.credential_pool as Record<string, CredentialEntry[]>)[provider] =
+    entries;
   await sshWriteAuthStore(config, store, profile);
 }
 
@@ -1313,7 +1342,8 @@ export async function sshAddCredentialPoolEntry(
   label: string,
   profile?: string,
 ): Promise<CredentialEntry[]> {
-  const existing = (await sshGetCredentialPool(config, profile))[provider] || [];
+  const existing =
+    (await sshGetCredentialPool(config, profile))[provider] || [];
   const entry = buildCredentialPoolEntry(provider, apiKey, label, existing);
   const next = [...existing, entry];
   await sshSetCredentialPool(config, provider, next, profile);
@@ -1347,16 +1377,41 @@ export async function sshGetProviderCredentialStatus(
   if (cleanProvider === "honcho") {
     const env = await sshReadEnv(config, profile);
     if (String(env.HONCHO_API_KEY || "").trim()) {
-      return { provider, configured: true, source: "env", locationLabel: ".env on VPS" };
+      return {
+        provider,
+        configured: true,
+        source: "env",
+        locationLabel: ".env on VPS",
+      };
     }
     if (await sshHasHonchoJsonCredential(config, profile)) {
-      return { provider, configured: true, source: "honcho.json", locationLabel: "honcho.json on VPS" };
+      return {
+        provider,
+        configured: true,
+        source: "honcho.json",
+        locationLabel: "honcho.json on VPS",
+      };
     }
-    return { provider, configured: false, source: "missing", locationLabel: "Missing on VPS" };
+    return {
+      provider,
+      configured: false,
+      source: "missing",
+      locationLabel: "Missing on VPS",
+    };
   }
   return (await sshHasOAuthCredentials(config, cleanProvider, profile))
-    ? { provider, configured: true, source: "auth.json", locationLabel: "auth.json on VPS" }
-    : { provider, configured: false, source: "missing", locationLabel: "Missing on VPS" };
+    ? {
+        provider,
+        configured: true,
+        source: "auth.json",
+        locationLabel: "auth.json on VPS",
+      }
+    : {
+        provider,
+        configured: false,
+        source: "missing",
+        locationLabel: "Missing on VPS",
+      };
 }
 
 export async function sshHasOAuthCredentials(
